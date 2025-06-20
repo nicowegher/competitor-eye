@@ -1,0 +1,15 @@
+# Archivos generados por el script
+*.csv
+*.xlsx
+
+# Archivos del sistema operativo
+.DS_Store
+__pycache__/
+
+# Dependencias de Python (si usas un entorno virtual)
+.venv/
+venv/
+env/
+*.pyc
+*.pyo
+*.pyd 

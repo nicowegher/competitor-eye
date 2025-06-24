@@ -12,6 +12,12 @@ from google.cloud import storage
 from dotenv import load_dotenv
 import json
 from google.oauth2 import service_account
+import threading
+import logging
+
+# --- CONFIGURACIÓN DE LOGGING ---
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # --- CONFIGURACIÓN FLASK Y CORS ---
 app = Flask(__name__)
@@ -40,6 +46,16 @@ else:
 db = firestore.client()
 bucket = storage_client.bucket(GCS_BUCKET_NAME)
 
+# --- VARIABLE GLOBAL PARA EL ESTADO DEL SCRAPER ---
+scraper_status = {
+    "is_running": False,
+    "progress": 0,
+    "total_tasks": 0,
+    "completed_tasks": 0,
+    "error": None,
+    "result": None
+}
+
 # --- FUNCIÓN DE CONEXIÓN A APIS EXTERNAS ---
 def obtener_datos_externos():
     try:
@@ -59,6 +75,92 @@ def obtener_datos_externos():
             {"id": 1, "nombre": "Dato de prueba 1", "fecha": datetime.now().isoformat()},
             {"id": 2, "nombre": "Dato de prueba 2", "fecha": datetime.now().isoformat()}
         ]
+
+# --- FUNCIÓN ASÍNCRONA PARA EL SCRAPER ---
+def run_scraper_async(hotel_base_urls, days):
+    global scraper_status
+    try:
+        logger.info("Iniciando scraper asíncrono")
+        scraper_status["is_running"] = True
+        scraper_status["error"] = None
+        scraper_status["progress"] = 0
+        
+        from apify_scraper import scrape_booking_data
+        
+        # Actualizar Firestore con estado inicial
+        doc_ref = db.collection("scraping_reports").document("run-scraper")
+        doc_ref.set({
+            "status": "running",
+            "startedAt": datetime.now(),
+            "hotels": len(hotel_base_urls),
+            "days": days
+        })
+        
+        # Ejecutar scraper
+        logger.info(f"Ejecutando scraper para {len(hotel_base_urls)} hoteles por {days} días")
+        result = scrape_booking_data(hotel_base_urls, days)
+        
+        if not result:
+            raise Exception("No se obtuvieron datos del scraper")
+        
+        # Generar archivos
+        df = pd.DataFrame(result)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_filename = f"run-scraper_{timestamp}.csv"
+        xlsx_filename = f"run-scraper_{timestamp}.xlsx"
+        
+        # Guardar archivos localmente
+        df.to_csv(csv_filename, index=False)
+        df.to_excel(xlsx_filename, index=False)
+        
+        # Subir a GCS
+        blob_csv = bucket.blob(f"reports/{csv_filename}")
+        blob_xlsx = bucket.blob(f"reports/{xlsx_filename}")
+        blob_csv.upload_from_filename(csv_filename)
+        blob_xlsx.upload_from_filename(xlsx_filename)
+        
+        # Hacer públicos
+        blob_csv.make_public()
+        blob_xlsx.make_public()
+        csv_url = blob_csv.public_url
+        xlsx_url = blob_xlsx.public_url
+        
+        # Limpiar archivos locales
+        os.remove(csv_filename)
+        os.remove(xlsx_filename)
+        
+        # Actualizar Firestore
+        doc_ref.update({
+            "status": "completed",
+            "completedAt": datetime.now(),
+            "csvFileUrl": csv_url,
+            "xlsxFileUrl": xlsx_url,
+            "totalRecords": len(result)
+        })
+        
+        # Actualizar estado global
+        scraper_status["is_running"] = False
+        scraper_status["progress"] = 100
+        scraper_status["result"] = {
+            "csvFileUrl": csv_url,
+            "xlsxFileUrl": xlsx_url,
+            "totalRecords": len(result)
+        }
+        
+        logger.info("Scraper completado exitosamente")
+        
+    except Exception as e:
+        logger.error(f"Error en scraper asíncrono: {str(e)}")
+        scraper_status["is_running"] = False
+        scraper_status["error"] = str(e)
+        
+        # Actualizar Firestore con error
+        doc_ref = db.collection("scraping_reports").document("run-scraper")
+        doc_ref.update({
+            "status": "failed",
+            "error": str(e),
+            "failedAt": datetime.now()
+        })
 
 # --- ENDPOINT HEALTH CHECK ---
 @app.route('/', methods=['GET'])
@@ -110,47 +212,50 @@ def descargar_excel():
     except Exception as e:
         return {"error": str(e)}, 500
 
-# --- ENDPOINT EXISTENTE DE SCRAPER (SE MANTIENE) ---
+# --- ENDPOINT MEJORADO DE SCRAPER ---
 @app.route('/run-scraper', methods=['POST'])
 def run_scraper():
-    from apify_scraper import scrape_booking_data
-    data = request.get_json()
-    hotel_base_urls = [data["ownHotelUrl"]] + data["competitorHotelUrls"]
-    days = data.get("daysToScrape", 2)
-    # Llama la función correctamente
-    result = scrape_booking_data(hotel_base_urls, days)
-    # Generar archivos CSV y XLSX
-    df = pd.DataFrame(result)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_filename = f"run-scraper_{timestamp}.csv"
-    xlsx_filename = f"run-scraper_{timestamp}.xlsx"
-    df.to_csv(csv_filename, index=False)
-    df.to_excel(xlsx_filename, index=False)
-    # Subir archivos a GCS
-    blob_csv = bucket.blob(f"reports/{csv_filename}")
-    blob_xlsx = bucket.blob(f"reports/{xlsx_filename}")
-    blob_csv.upload_from_filename(csv_filename)
-    blob_xlsx.upload_from_filename(xlsx_filename)
-    # Hacer públicos los archivos (opcional, según reglas del bucket)
-    blob_csv.make_public()
-    blob_xlsx.make_public()
-    csv_url = blob_csv.public_url
-    xlsx_url = blob_xlsx.public_url
-    # Actualizar Firestore
-    doc_ref = db.collection("scraping_reports").document("run-scraper")
-    doc_ref.update({
-        "status": "completed",
-        "completedAt": firestore.SERVER_TIMESTAMP,
-        "csvFileUrl": csv_url,
-        "xlsxFileUrl": xlsx_url
-    })
-    # Devolver respuesta al frontend
-    return jsonify({
-        "status": "completed",
-        "completedAt": datetime.now().isoformat(),
-        "csvFileUrl": csv_url,
-        "xlsxFileUrl": xlsx_url
-    })
+    global scraper_status
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No se recibieron datos JSON"}), 400
+        
+        hotel_base_urls = [data["ownHotelUrl"]] + data["competitorHotelUrls"]
+        days = data.get("daysToScrape", 2)
+        
+        # Verificar si ya hay un scraper ejecutándose
+        if scraper_status["is_running"]:
+            return jsonify({
+                "status": "already_running",
+                "message": "Ya hay un scraper ejecutándose"
+            }), 409
+        
+        # Iniciar scraper en un hilo separado
+        thread = threading.Thread(
+            target=run_scraper_async,
+            args=(hotel_base_urls, days)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({
+            "status": "started",
+            "message": "Scraper iniciado correctamente",
+            "hotels": len(hotel_base_urls),
+            "days": days
+        })
+        
+    except Exception as e:
+        logger.error(f"Error al iniciar scraper: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# --- ENDPOINT PARA VERIFICAR ESTADO DEL SCRAPER ---
+@app.route('/scraper-status', methods=['GET'])
+def get_scraper_status():
+    global scraper_status
+    return jsonify(scraper_status)
 
 # --- CONFIGURACIÓN PARA RENDER.COM ---
 if __name__ == "__main__":

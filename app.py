@@ -114,66 +114,43 @@ def descargar_excel():
 @app.route('/run-scraper', methods=['POST'])
 def run_scraper():
     from apify_scraper import scrape_booking_data
-    data = request.json
-    # Validar campos obligatorios
-    required_fields = ["taskId", "setName", "ownHotelUrl", "competitorHotelUrls", "daysToScrape", "userId"]
-    for field in required_fields:
-        if field not in data:
-            return jsonify({"error": f"Falta el campo obligatorio: {field}"}), 400
-    task_id = data["taskId"]
-    set_name = data["setName"]
-    own_hotel_url = data["ownHotelUrl"]
-    competitor_hotel_urls = data["competitorHotelUrls"]
-    days = data["daysToScrape"]
-    user_id = data["userId"]
-    all_urls = [own_hotel_url] + competitor_hotel_urls
-    try:
-        resultados = scrape_booking_data(all_urls, days)
-        # Generar archivos CSV y XLSX
-        df = pd.DataFrame(resultados)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        csv_filename = f"{task_id}_{timestamp}.csv"
-        xlsx_filename = f"{task_id}_{timestamp}.xlsx"
-        df.to_csv(csv_filename, index=False)
-        df.to_excel(xlsx_filename, index=False)
-        # Subir archivos a GCS
-        blob_csv = bucket.blob(f"reports/{csv_filename}")
-        blob_xlsx = bucket.blob(f"reports/{xlsx_filename}")
-        blob_csv.upload_from_filename(csv_filename)
-        blob_xlsx.upload_from_filename(xlsx_filename)
-        # Hacer públicos los archivos (opcional, según reglas del bucket)
-        blob_csv.make_public()
-        blob_xlsx.make_public()
-        csv_url = blob_csv.public_url
-        xlsx_url = blob_xlsx.public_url
-        # Actualizar Firestore
-        doc_ref = db.collection("scraping_reports").document(task_id)
-        doc_ref.update({
-            "status": "completed",
-            "completedAt": firestore.SERVER_TIMESTAMP,
-            "csvFileUrl": csv_url,
-            "xlsxFileUrl": xlsx_url
-        })
-        # Devolver respuesta al frontend
-        return jsonify({
-            "status": "completed",
-            "completedAt": datetime.now().isoformat(),
-            "csvFileUrl": csv_url,
-            "xlsxFileUrl": xlsx_url
-        })
-    except Exception as e:
-        # Actualizar Firestore con error
-        doc_ref = db.collection("scraping_reports").document(task_id)
-        doc_ref.update({
-            "status": "failed",
-            "completedAt": firestore.SERVER_TIMESTAMP,
-            "error": str(e)
-        })
-        return jsonify({
-            "status": "failed",
-            "completedAt": datetime.now().isoformat(),
-            "error": str(e)
-        }), 500
+    data = request.get_json()
+    hotel_base_urls = [data["ownHotelUrl"]] + data["competitorHotelUrls"]
+    days = data.get("daysToScrape", 2)
+    # Llama la función correctamente
+    result = scrape_booking_data(hotel_base_urls, days)
+    # Generar archivos CSV y XLSX
+    df = pd.DataFrame(result)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    csv_filename = f"run-scraper_{timestamp}.csv"
+    xlsx_filename = f"run-scraper_{timestamp}.xlsx"
+    df.to_csv(csv_filename, index=False)
+    df.to_excel(xlsx_filename, index=False)
+    # Subir archivos a GCS
+    blob_csv = bucket.blob(f"reports/{csv_filename}")
+    blob_xlsx = bucket.blob(f"reports/{xlsx_filename}")
+    blob_csv.upload_from_filename(csv_filename)
+    blob_xlsx.upload_from_filename(xlsx_filename)
+    # Hacer públicos los archivos (opcional, según reglas del bucket)
+    blob_csv.make_public()
+    blob_xlsx.make_public()
+    csv_url = blob_csv.public_url
+    xlsx_url = blob_xlsx.public_url
+    # Actualizar Firestore
+    doc_ref = db.collection("scraping_reports").document("run-scraper")
+    doc_ref.update({
+        "status": "completed",
+        "completedAt": firestore.SERVER_TIMESTAMP,
+        "csvFileUrl": csv_url,
+        "xlsxFileUrl": xlsx_url
+    })
+    # Devolver respuesta al frontend
+    return jsonify({
+        "status": "completed",
+        "completedAt": datetime.now().isoformat(),
+        "csvFileUrl": csv_url,
+        "xlsxFileUrl": xlsx_url
+    })
 
 # --- CONFIGURACIÓN PARA RENDER.COM ---
 if __name__ == "__main__":

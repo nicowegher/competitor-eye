@@ -17,7 +17,7 @@ def fetch_price_for_night(client, base_url, hotel_name, checkin, checkout):
         "checkOut": checkout,
         "maxRequestsPerCrawl": 1,
         "maxConcurrency": 1,
-        "proxyConfiguration": {"useApifyProxy": True},
+        "proxyConfiguration": {"useApifyProxy": True, "apifyProxyGroups": ["US"]},
         "currency": "USD",
         "language": "es",
         "maxPagesPerCrawl": 1,
@@ -45,12 +45,12 @@ def fetch_price_for_night(client, base_url, hotel_name, checkin, checkout):
         print(f"Error para {hotel_name} {checkin}: {e}")
         return (hotel_name, base_url, checkin, "N/A")
 
-def scrape_booking_data(hotel_base_urls):
+def scrape_booking_data(hotel_base_urls, days=2):
     client = ApifyClient(APIFY_API_TOKEN)
     today = datetime.now()
     date_ranges = [
         ((today + timedelta(days=i)).strftime("%Y-%m-%d"), (today + timedelta(days=i+1)).strftime("%Y-%m-%d"))
-        for i in range(1, 3)
+        for i in range(1, days+1)
     ]
     # Obtener nombres de hoteles (opcional, se puede mejorar)
     url_to_name = {url: url.split("/hotel/")[-1].split(".")[0].replace("-", " ").title() for url in hotel_base_urls}
@@ -89,17 +89,14 @@ def main():
     hotel_base_urls = [
         "https://www.booking.com/hotel/ar/el-pueblito-iguazu.es.html?selected_currency=USD",
         "https://www.booking.com/hotel/ar/guamini-mision-puerto-iguazu6.es.html?selected_currency=USD",
-        "https://www.booking.com/hotel/ar/la-aldea-de-la-selva-lodge.es.html?selected_currency=USD",
-        "https://www.booking.com/hotel/ar/esturion.es.html?selected_currency=USD",
-        "https://www.booking.com/hotel/ar/exehotelcataratas.es.html?selected_currency=USD",
         # Agrega más URLs aquí si lo deseas
     ]
-    
+    days = 1  # Cambia este valor para probar con más días
     if APIFY_API_TOKEN == "YOUR_APIFY_API_TOKEN":
         print("ERROR: Por favor, reemplaza 'YOUR_APIFY_API_TOKEN' con tu token real de Apify en el archivo apify_scraper.py.")
         return
 
-    scraped_data = scrape_booking_data(hotel_base_urls)
+    scraped_data = scrape_booking_data(hotel_base_urls, days=days)
 
     if scraped_data:
         df = pd.DataFrame(scraped_data)
@@ -116,7 +113,7 @@ def main():
     else:
         print("No se obtuvieron datos de scraping.")
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
 
 

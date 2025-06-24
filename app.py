@@ -11,6 +11,7 @@ from firebase_admin import credentials, firestore
 from google.cloud import storage
 from dotenv import load_dotenv
 import json
+from google.oauth2 import service_account
 
 # --- CONFIGURACIÓN FLASK Y CORS ---
 app = Flask(__name__)
@@ -28,13 +29,15 @@ if firebase_creds:
     cred_dict = json.loads(firebase_creds)
     cred = credentials.Certificate(cred_dict)
     firebase_admin.initialize_app(cred)
+    gcs_credentials = service_account.Credentials.from_service_account_info(cred_dict)
+    storage_client = storage.Client(credentials=gcs_credentials, project=cred_dict.get("project_id"))
 else:
     # Modo local, usa el archivo
     cred = credentials.Certificate("firebase_service_account.json")
     firebase_admin.initialize_app(cred)
+    storage_client = storage.Client()
 
 db = firestore.client()
-storage_client = storage.Client()
 bucket = storage_client.bucket(GCS_BUCKET_NAME)
 
 # --- FUNCIÓN DE CONEXIÓN A APIS EXTERNAS ---

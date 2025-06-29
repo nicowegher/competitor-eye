@@ -77,7 +77,7 @@ def obtener_datos_externos():
         ]
 
 # --- FUNCIÓN ASÍNCRONA PARA EL SCRAPER ---
-def run_scraper_async(hotel_base_urls, days):
+def run_scraper_async(hotel_base_urls, days, taskId):
     global scraper_status
     try:
         logger.info("Iniciando scraper asíncrono")
@@ -87,9 +87,9 @@ def run_scraper_async(hotel_base_urls, days):
         
         from apify_scraper import scrape_booking_data
         
-        # Actualizar Firestore con estado inicial
-        doc_ref = db.collection("scraping_reports").document("run-scraper")
-        doc_ref.set({
+        # Actualizar Firestore con estado inicial usando taskId
+        doc_ref = db.collection("scraping_reports").document(taskId)
+        doc_ref.update({
             "status": "running",
             "startedAt": datetime.now(),
             "hotels": len(hotel_base_urls),
@@ -129,7 +129,7 @@ def run_scraper_async(hotel_base_urls, days):
         os.remove(csv_filename)
         os.remove(xlsx_filename)
         
-        # Actualizar Firestore
+        # Actualizar Firestore con éxito usando taskId
         doc_ref.update({
             "status": "completed",
             "completedAt": datetime.now(),
@@ -154,12 +154,12 @@ def run_scraper_async(hotel_base_urls, days):
         scraper_status["is_running"] = False
         scraper_status["error"] = str(e)
         
-        # Actualizar Firestore con error
-        doc_ref = db.collection("scraping_reports").document("run-scraper")
+        # Actualizar Firestore con error usando taskId
+        doc_ref = db.collection("scraping_reports").document(taskId)
         doc_ref.update({
             "status": "failed",
-            "error": str(e),
-            "failedAt": datetime.now()
+            "completedAt": datetime.now(),
+            "error": str(e)
         })
 
 # --- ENDPOINT HEALTH CHECK ---
@@ -219,8 +219,9 @@ def run_scraper():
     
     try:
         data = request.get_json()
-        if not data:
-            return jsonify({"error": "No se recibieron datos JSON"}), 400
+        taskId = data.get("taskId")
+        if not taskId:
+            return jsonify({"error": "taskId is required"}), 400
         
         hotel_base_urls = [data["ownHotelUrl"]] + data["competitorHotelUrls"]
         days = data.get("daysToScrape", 2)
@@ -232,10 +233,10 @@ def run_scraper():
                 "message": "Ya hay un scraper ejecutándose"
             }), 409
         
-        # Iniciar scraper en un hilo separado
+        # Iniciar scraper en un hilo separado, pasando el taskId
         thread = threading.Thread(
             target=run_scraper_async,
-            args=(hotel_base_urls, days)
+            args=(hotel_base_urls, days, taskId)
         )
         thread.daemon = True
         thread.start()
@@ -244,7 +245,8 @@ def run_scraper():
             "status": "started",
             "message": "Scraper iniciado correctamente",
             "hotels": len(hotel_base_urls),
-            "days": days
+            "days": days,
+            "taskId": taskId
         })
         
     except Exception as e:

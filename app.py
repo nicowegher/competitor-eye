@@ -14,6 +14,7 @@ import json
 from google.oauth2 import service_account
 import threading
 import logging
+from mailersend import emails
 
 # --- CONFIGURACIÓN DE LOGGING ---
 logging.basicConfig(level=logging.INFO)
@@ -77,7 +78,7 @@ def obtener_datos_externos():
         ]
 
 # --- FUNCIÓN ASÍNCRONA PARA EL SCRAPER ---
-def run_scraper_async(hotel_base_urls, days, taskId):
+def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=None):
     global scraper_status
     try:
         logger.info("Iniciando scraper asíncrono")
@@ -137,6 +138,40 @@ def run_scraper_async(hotel_base_urls, days, taskId):
             "xlsxFileUrl": xlsx_url,
             "totalRecords": len(result)
         })
+        
+        # Enviar email de notificación si hay userEmail
+        if userEmail:
+            try:
+                mailer = emails.NewEmail(os.environ.get("MAILERSEND_API_KEY"))
+                mail_from = {"name": "Scraper Tarifas Hoteles", "email": os.environ.get("MAILERSEND_SENDER_EMAIL", "no-reply@tudominio.com")}
+                recipients = [{"email": userEmail}]
+                subject = f"¡Tu informe para '{setName or 'Hoteles'}' está listo!"
+                html_content = f'''
+                <h1>¡Informe Completado!</h1>
+                <p>Hola,</p>
+                <p>Tu informe de precios para el grupo competitivo "<strong>{setName or 'Hoteles'}</strong>" ya está disponible para descargar.</p>
+                <p>
+                  <a href="{xlsx_url}" style="padding: 10px 15px; background-color: #007BFF; color: white; text-decoration: none; border-radius: 5px;">
+                    Descargar Informe (Excel)
+                  </a>
+                </p>
+                <p>
+                  <a href="{csv_url}">
+                    Descargar en formato .CSV
+                  </a>
+                </p>
+                <p>Gracias por usar nuestros servicios.</p>
+                '''
+                mail_body = {}
+                mailer.set_mail_from(mail_from["email"], mail_body)
+                mailer.set_mail_to(recipients, mail_body)
+                mailer.set_subject(subject, mail_body)
+                mailer.set_html_content(html_content, mail_body)
+                mailer.set_plaintext_content(f"Tu informe para '{setName or 'Hoteles'}' está listo. Descarga Excel: {xlsx_url} | CSV: {csv_url}", mail_body)
+                mailer.send(mail_body)
+                logger.info(f"Email de notificación enviado a {userEmail}")
+            except Exception as e:
+                logger.error(f"Error al enviar el email de notificación: {e}")
         
         # Actualizar estado global
         scraper_status["is_running"] = False
@@ -225,6 +260,8 @@ def run_scraper():
         
         hotel_base_urls = [data["ownHotelUrl"]] + data["competitorHotelUrls"]
         days = data.get("daysToScrape", 2)
+        userEmail = data.get("userEmail")
+        setName = data.get("setName")
         
         # Verificar si ya hay un scraper ejecutándose
         if scraper_status["is_running"]:
@@ -233,10 +270,10 @@ def run_scraper():
                 "message": "Ya hay un scraper ejecutándose"
             }), 409
         
-        # Iniciar scraper en un hilo separado, pasando el taskId
+        # Iniciar scraper en un hilo separado, pasando el taskId y userEmail
         thread = threading.Thread(
             target=run_scraper_async,
-            args=(hotel_base_urls, days, taskId)
+            args=(hotel_base_urls, days, taskId, userEmail, setName)
         )
         thread.daemon = True
         thread.start()

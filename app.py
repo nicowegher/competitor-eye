@@ -130,13 +130,44 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
         os.remove(csv_filename)
         os.remove(xlsx_filename)
         
+        # --- ENRIQUECER DATOS PARA GRÁFICOS ---
+        # 1. Extraer nombres de hoteles en orden
+        hotelNames = [hotel["Hotel Name"] for hotel in result]
+        # 2. Extraer todas las fechas únicas
+        all_dates = set()
+        for hotel in result:
+            for k in hotel.keys():
+                if k not in ("Hotel Name", "URL"):
+                    all_dates.add(k)
+        all_dates = sorted(all_dates)  # formato YYYY-MM-DD
+        # 3. Construir chartData
+        chartData = []
+        for date in all_dates:
+            day_obj = {"date": date}
+            for hotel in result:
+                name = hotel["Hotel Name"]
+                price = hotel.get(date, None)
+                # Convertir "N/A" a None/null, y string numérico a float
+                if price == "N/A":
+                    day_obj[name] = None
+                elif price is None:
+                    day_obj[name] = None
+                else:
+                    try:
+                        day_obj[name] = float(price)
+                    except:
+                        day_obj[name] = None
+            chartData.append(day_obj)
+        
         # Actualizar Firestore con éxito usando taskId
         doc_ref.update({
             "status": "completed",
             "completedAt": datetime.now(),
             "csvFileUrl": csv_url,
             "xlsxFileUrl": xlsx_url,
-            "totalRecords": len(result)
+            "totalRecords": len(result),
+            "hotelNames": hotelNames,
+            "chartData": chartData
         })
         
         # Enviar email de notificación si hay userEmail

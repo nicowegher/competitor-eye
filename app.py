@@ -163,7 +163,7 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
                 <p>Gracias por usar nuestros servicios.</p>
                 '''
                 mail_body = {}
-                mailer.set_mail_from(mail_from["email"], mail_body)
+                mailer.set_mail_from(mail_from, mail_body)
                 mailer.set_mail_to(recipients, mail_body)
                 mailer.set_subject(subject, mail_body)
                 mailer.set_html_content(html_content, mail_body)

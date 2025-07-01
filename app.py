@@ -168,7 +168,8 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
                 mailer.set_subject(subject, mail_body)
                 mailer.set_html_content(html_content, mail_body)
                 mailer.set_plaintext_content(f"Tu informe para '{setName or 'Hoteles'}' está listo. Descarga Excel: {xlsx_url} | CSV: {csv_url}", mail_body)
-                mailer.send(mail_body)
+                response = mailer.send(mail_body)
+                logger.info(f"Respuesta de MailerSend: {getattr(response, 'status_code', 'N/A')} - {getattr(response, 'text', str(response))}")
                 logger.info(f"Email de notificación enviado a {userEmail}")
             except Exception as e:
                 logger.error(f"Error al enviar el email de notificación: {e}")

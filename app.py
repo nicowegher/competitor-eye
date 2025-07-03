@@ -15,6 +15,7 @@ from google.oauth2 import service_account
 import threading
 import logging
 from mailersend import emails
+from time import sleep
 
 # --- CONFIGURACIÓN DE LOGGING ---
 logging.basicConfig(level=logging.INFO)
@@ -327,6 +328,77 @@ def run_scraper():
 def get_scraper_status():
     global scraper_status
     return jsonify(scraper_status)
+
+# --- ENDPOINT PARA EJECUCIÓN PROGRAMADA DE SCRAPERS ---
+@app.route('/execute-scheduled-tasks', methods=['POST'])
+def execute_scheduled_tasks():
+    SECRET_TOKEN = os.environ.get('SCHEDULE_SECRET_TOKEN', 'supersecreto')
+    token = request.args.get('token')
+    if token != SECRET_TOKEN:
+        return jsonify({"error": "Token inválido"}), 403
+
+    try:
+        hoy = datetime.utcnow()
+        dia_semana = hoy.weekday()  # 0=Lunes, 6=Domingo
+        # Firestore: obtener todos los competitive_sets con schedule no nulo
+        sets_ref = db.collection('competitive_sets')
+        sets = sets_ref.stream()
+        sets_a_ejecutar = []
+        for doc in sets:
+            data = doc.to_dict()
+            schedule = data.get('schedule')
+            if not schedule:
+                continue
+            freq = schedule.get('frequency')
+            day_of_week = schedule.get('dayOfWeek')
+            if freq == 'daily':
+                ejecutar = True
+            elif freq == 'weekly' and day_of_week is not None and int(day_of_week) == dia_semana:
+                ejecutar = True
+            else:
+                ejecutar = False
+            if ejecutar:
+                sets_a_ejecutar.append({
+                    'setId': doc.id,
+                    'userId': data.get('userId'),
+                    'userEmail': data.get('userEmail'),
+                    'ownHotelUrl': data.get('ownHotelUrl'),
+                    'competitorHotelUrls': data.get('competitorHotelUrls', []),
+                    'daysToScrape': schedule.get('daysToScrape', 2),
+                    'setName': data.get('name', '')
+                })
+        resultados = []
+        for s in sets_a_ejecutar:
+            payload = {
+                'taskId': s['setId'],
+                'ownHotelUrl': s['ownHotelUrl'],
+                'competitorHotelUrls': s['competitorHotelUrls'],
+                'daysToScrape': s['daysToScrape'],
+                'userEmail': s['userEmail'],
+                'setName': s['setName']
+            }
+            try:
+                # Llamada interna al endpoint /run-scraper
+                url = request.host_url.rstrip('/') + '/run-scraper'
+                resp = requests.post(url, json=payload, timeout=60)
+                resultados.append({
+                    'setId': s['setId'],
+                    'status': resp.status_code,
+                    'response': resp.json()
+                })
+                sleep(2)  # Pausa de 2 segundos entre ejecuciones para evitar sobrecarga
+            except Exception as e:
+                resultados.append({
+                    'setId': s['setId'],
+                    'status': 'error',
+                    'error': str(e)
+                })
+        return jsonify({
+            'total_sets': len(sets_a_ejecutar),
+            'resultados': resultados
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # --- CONFIGURACIÓN PARA RENDER.COM ---
 if __name__ == "__main__":

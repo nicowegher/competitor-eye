@@ -400,11 +400,6 @@ def execute_scheduled_tasks():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# --- ENDPOINT PARA VERIFICAR TOKEN ---
-@app.route('/ver-token', methods=['GET'])
-def ver_token():
-    return {"token": os.environ.get('SCHEDULE_SECRET_TOKEN')}
-
 # --- CONFIGURACIÓN PARA RENDER.COM ---
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

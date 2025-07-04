@@ -7,7 +7,7 @@ import io
 import os
 from datetime import datetime
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, auth as firebase_auth
 from google.cloud import storage
 from dotenv import load_dotenv
 import json
@@ -16,6 +16,7 @@ import threading
 import logging
 from mailersend import emails
 from time import sleep
+import mercadopago
 
 # --- CONFIGURACIÓN DE LOGGING ---
 logging.basicConfig(level=logging.INFO)
@@ -57,6 +58,48 @@ scraper_status = {
     "error": None,
     "result": None
 }
+
+# --- LÍMITES POR PLAN ---
+PLAN_LIMITS = {
+    "free_trial": {
+        "max_groups": 1,
+        "max_competitors": 2,
+        "max_days": 7,
+        "scheduling": False
+    },
+    "esencial": {
+        "max_groups": 1,
+        "max_competitors": 3,
+        "max_days": 30,
+        "scheduling": False
+    },
+    "pro": {
+        "max_groups": 3,
+        "max_competitors": 5,
+        "max_days": 60,
+        "scheduling": "weekly"
+    },
+    "market_leader": {
+        "max_groups": 5,
+        "max_competitors": 7,
+        "max_days": 90,
+        "scheduling": "daily"
+    }
+}
+
+# --- Mapeo de planes a preapproval_plan_id de Mercado Pago ---
+MP_PLAN_IDS = {
+    "esencial": "2c93808497c462520197d744586508be",
+    "pro": "2c93808497c19ac40197d7445b440a20",
+    "market_leader": "2c93808497d635430197d7445e1c00bc"
+}
+
+def get_user_plan(uid):
+    user_ref = db.collection('users').document(uid)
+    user_doc = user_ref.get()
+    if user_doc.exists:
+        return user_doc.to_dict().get('plan', 'free_trial')
+    return 'free_trial'
 
 # --- FUNCIÓN DE CONEXIÓN A APIS EXTERNAS ---
 def obtener_datos_externos():
@@ -288,11 +331,16 @@ def run_scraper():
     try:
         data = request.get_json()
         taskId = data.get("taskId")
+        uid = data.get("userId")
+        days = data.get("daysToScrape", 2)
+        plan = get_user_plan(uid)
+        limits = PLAN_LIMITS.get(plan, PLAN_LIMITS['free_trial'])
+        if days > limits['max_days']:
+            return jsonify({"error": f"Tu plan solo permite hasta {limits['max_days']} días de análisis.", "code": "LIMIT_DAYS"}), 403
         if not taskId:
             return jsonify({"error": "taskId is required"}), 400
         
         hotel_base_urls = [data["ownHotelUrl"]] + data["competitorHotelUrls"]
-        days = data.get("daysToScrape", 2)
         userEmail = data.get("userEmail")
         setName = data.get("setName")
         
@@ -399,6 +447,137 @@ def execute_scheduled_tasks():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+# --- ENDPOINT PARA INICIAR USUARIO ---
+@app.route('/init-user', methods=['POST'])
+def init_user():
+    data = request.get_json()
+    uid = data.get('uid')
+    email = data.get('email')
+    if not uid or not email:
+        return {"error": "Faltan datos"}, 400
+
+    user_ref = db.collection('users').document(uid)
+    user_ref.set({
+        "email": email,
+        "plan": "free_trial"
+    }, merge=True)
+    return {"success": True}
+
+# --- ENDPOINT CREAR GRUPO COMPETITIVO (ejemplo) ---
+@app.route('/crear-grupo', methods=['POST'])
+def crear_grupo():
+    data = request.get_json()
+    uid = data.get('uid')
+    plan = get_user_plan(uid)
+    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS['free_trial'])
+    # Contar grupos existentes
+    grupos = db.collection('competitive_sets').where('userId', '==', uid).stream()
+    num_grupos = len(list(grupos))
+    if num_grupos >= limits['max_groups']:
+        return {"error": "Límite de grupos alcanzado para tu plan.", "code": "LIMIT_GROUPS"}, 403
+    # ... lógica para crear el grupo ...
+    return {"success": True}
+
+# --- ENDPOINT AGREGAR COMPETIDOR (ejemplo) ---
+@app.route('/agregar-competidor', methods=['POST'])
+def agregar_competidor():
+    data = request.get_json()
+    uid = data.get('uid')
+    set_id = data.get('setId')
+    plan = get_user_plan(uid)
+    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS['free_trial'])
+    set_ref = db.collection('competitive_sets').document(set_id)
+    set_doc = set_ref.get()
+    if not set_doc.exists:
+        return {"error": "Grupo no encontrado.", "code": "NOT_FOUND"}, 404
+    competidores = set_doc.to_dict().get('competitorHotelUrls', [])
+    if len(competidores) >= limits['max_competitors']:
+        return {"error": "Límite de competidores alcanzado para tu plan.", "code": "LIMIT_COMPETITORS"}, 403
+    # ... lógica para agregar competidor ...
+    return {"success": True}
+
+# --- ENDPOINT CONFIGURAR DÍAS DE ANÁLISIS (ejemplo) ---
+@app.route('/configurar-dias', methods=['POST'])
+def configurar_dias():
+    data = request.get_json()
+    uid = data.get('uid')
+    days = data.get('daysToScrape')
+    plan = get_user_plan(uid)
+    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS['free_trial'])
+    if days > limits['max_days']:
+        return {"error": f"Tu plan solo permite hasta {limits['max_days']} días de análisis.", "code": "LIMIT_DAYS"}, 403
+    # ... lógica para guardar la configuración ...
+    return {"success": True}
+
+# --- ENDPOINT CONFIGURAR PROGRAMACIÓN (ejemplo) ---
+@app.route('/configurar-schedule', methods=['POST'])
+def configurar_schedule():
+    data = request.get_json()
+    uid = data.get('uid')
+    schedule = data.get('schedule')
+    plan = get_user_plan(uid)
+    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS['free_trial'])
+    if not limits['scheduling']:
+        return {"error": "Tu plan no permite programar investigaciones automáticas.", "code": "LIMIT_SCHEDULING"}, 403
+    if limits['scheduling'] == 'weekly' and (schedule is not None and schedule.get('frequency') == 'daily'):
+        return {"error": "Tu plan solo permite programación semanal.", "code": "LIMIT_SCHEDULING_FREQ"}, 403
+    # ... lógica para guardar la programación ...
+    return {"success": True}
+
+# --- Endpoint para crear suscripción de Mercado Pago ---
+@app.route('/create-subscription-checkout', methods=['POST'])
+def create_subscription_checkout():
+    data = request.get_json()
+    plan_id = data.get('planId')
+    token = request.headers.get('Authorization', '').replace('Bearer ', '')
+    if not plan_id or plan_id not in MP_PLAN_IDS:
+        return {"error": "Plan inválido."}, 400
+    if not token:
+        return {"error": "Token de autenticación requerido."}, 401
+    try:
+        decoded_token = firebase_auth.verify_id_token(token)
+        user_id = decoded_token['uid']
+        user_email = decoded_token.get('email')
+    except Exception as e:
+        return {"error": "Token inválido o expirado."}, 401
+    sdk = mercadopago.SDK(os.environ['MERCADOPAGO_ACCESS_TOKEN'])
+    preference = {
+        "preapproval_plan_id": MP_PLAN_IDS[plan_id],
+        "payer_email": user_email,
+        "external_reference": user_id,
+        "back_url": "https://TU-DOMINIO.com/dashboard"
+    }
+    try:
+        result = sdk.preapproval().create(preference)
+        init_point = result['response'].get('init_point')
+        if not init_point:
+            return {"error": "No se pudo crear el checkout."}, 500
+        return {"checkoutUrl": init_point}
+    except Exception as e:
+        return {"error": f"Error al crear suscripción: {str(e)}"}, 500
+
+# --- Webhook de Mercado Pago para actualizar plan del usuario ---
+@app.route('/mercado-pago-webhook', methods=['POST'])
+def mercado_pago_webhook():
+    sdk = mercadopago.SDK(os.environ['MERCADOPAGO_ACCESS_TOKEN'])
+    body = request.get_json()
+    if body and body.get('type') == 'preapproval':
+        try:
+            preapproval_id = body['data']['id']
+            preapproval = sdk.preapproval().get(preapproval_id)
+            status = preapproval['response'].get('status')
+            if status == 'authorized':
+                user_id = preapproval['response'].get('external_reference')
+                mp_plan_id = preapproval['response'].get('preapproval_plan_id')
+                plan = next((k for k, v in MP_PLAN_IDS.items() if v == mp_plan_id), None)
+                if user_id and plan:
+                    user_ref = db.collection('users').document(user_id)
+                    user_ref.update({"plan": plan})
+        except Exception as e:
+            print(f"Error en webhook Mercado Pago: {e}")
+            return "Error", 500
+    return "OK", 200
 
 # --- CONFIGURACIÓN PARA RENDER.COM ---
 if __name__ == "__main__":

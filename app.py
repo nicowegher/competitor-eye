@@ -540,7 +540,10 @@ def create_subscription_checkout():
         user_id = decoded_token['uid']
         user_email = decoded_token.get('email')
     except Exception as e:
-        return {"error": "Token inválido o expirado."}, 401
+        import traceback
+        print("ERROR VERIFICANDO TOKEN FIREBASE:", e)
+        traceback.print_exc()
+        return {"error": f"Token inválido o expirado. Detalle: {str(e)}"}, 401
     sdk = mercadopago.SDK(os.environ['MERCADOPAGO_ACCESS_TOKEN'])
     preference = {
         "preapproval_plan_id": MP_PLAN_IDS[plan_id],

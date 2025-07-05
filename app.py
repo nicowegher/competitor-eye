@@ -553,11 +553,15 @@ def create_subscription_checkout():
     }
     try:
         result = sdk.preapproval().create(preference)
+        print("RESULTADO MERCADO PAGO:", result)
         init_point = result['response'].get('init_point')
         if not init_point:
-            return {"error": "No se pudo crear el checkout."}, 500
+            return {"error": f"No se pudo crear el checkout. Detalle: {result['response']}"}, 500
         return {"checkoutUrl": init_point}
     except Exception as e:
+        import traceback
+        print("ERROR MERCADO PAGO:", e)
+        traceback.print_exc()
         return {"error": f"Error al crear suscripción: {str(e)}"}, 500
 
 # --- Webhook de Mercado Pago para actualizar plan del usuario ---

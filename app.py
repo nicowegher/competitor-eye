@@ -572,7 +572,6 @@ def mercado_pago_webhook():
         logger.info(f"Headers: {dict(request.headers)}")
         logger.info(f"Body: {request.get_json()}")
         
-        sdk = mercadopago.SDK(os.environ['MERCADOPAGO_ACCESS_TOKEN'])
         body = request.get_json()
         
         if not body:
@@ -600,78 +599,93 @@ def mercado_pago_webhook():
                 logger.info(f"Test User ID: {test_user_id}")
                 logger.info(f"Test Plan: {test_plan}")
                 
-                # Actualizar el plan del usuario en Firestore
-                user_ref = db.collection('users').document(test_user_id)
-                user_ref.update({
-                    "plan": test_plan,
-                    "subscription_updated_at": datetime.now(),
-                    "mp_subscription_id": preapproval_id,
-                    "is_test": True
-                })
-                logger.info(f"✅ Plan actualizado para test - Usuario {test_user_id}: {test_plan}")
+                try:
+                    # Actualizar el plan del usuario en Firestore
+                    user_ref = db.collection('users').document(test_user_id)
+                    user_ref.update({
+                        "plan": test_plan,
+                        "subscription_updated_at": datetime.now(),
+                        "mp_subscription_id": preapproval_id,
+                        "is_test": True
+                    })
+                    logger.info(f"✅ Plan actualizado para test - Usuario {test_user_id}: {test_plan}")
+                except Exception as firestore_error:
+                    logger.error(f"Error actualizando Firestore: {firestore_error}")
+                    return "Error actualizando Firestore", 500
                 
             else:
-                # Obtener detalles de la suscripción real
-                preapproval = sdk.preapproval().get(preapproval_id)
-                logger.info(f"Preapproval response: {preapproval}")
-                
-                if preapproval['response']:
-                    status = preapproval['response'].get('status')
-                    user_id = preapproval['response'].get('external_reference')
-                    mp_plan_id = preapproval['response'].get('preapproval_plan_id')
+                # Solo inicializar SDK para suscripciones reales
+                try:
+                    sdk = mercadopago.SDK(os.environ['MERCADOPAGO_ACCESS_TOKEN'])
+                    # Obtener detalles de la suscripción real
+                    preapproval = sdk.preapproval().get(preapproval_id)
+                    logger.info(f"Preapproval response: {preapproval}")
                     
-                    logger.info(f"Status: {status}")
-                    logger.info(f"User ID: {user_id}")
-                    logger.info(f"MP Plan ID: {mp_plan_id}")
-                    
-                    if status == 'authorized' and user_id and mp_plan_id:
-                        # Encontrar el plan correspondiente
-                        plan = next((k for k, v in MP_PLAN_IDS.items() if v == mp_plan_id), None)
-                        logger.info(f"Plan encontrado: {plan}")
+                    if preapproval['response']:
+                        status = preapproval['response'].get('status')
+                        user_id = preapproval['response'].get('external_reference')
+                        mp_plan_id = preapproval['response'].get('preapproval_plan_id')
                         
-                        if plan:
-                            # Actualizar el plan del usuario en Firestore
-                            user_ref = db.collection('users').document(user_id)
-                            user_ref.update({
-                                "plan": plan,
-                                "subscription_updated_at": datetime.now(),
-                                "mp_subscription_id": preapproval_id
-                            })
-                            logger.info(f"✅ Plan actualizado para usuario {user_id}: {plan}")
+                        logger.info(f"Status: {status}")
+                        logger.info(f"User ID: {user_id}")
+                        logger.info(f"MP Plan ID: {mp_plan_id}")
+                        
+                        if status == 'authorized' and user_id and mp_plan_id:
+                            # Encontrar el plan correspondiente
+                            plan = next((k for k, v in MP_PLAN_IDS.items() if v == mp_plan_id), None)
+                            logger.info(f"Plan encontrado: {plan}")
                             
-                            # Log del usuario actualizado
-                            user_doc = user_ref.get()
-                            if user_doc.exists:
-                                logger.info(f"Usuario actualizado: {user_doc.to_dict()}")
+                            if plan:
+                                # Actualizar el plan del usuario en Firestore
+                                user_ref = db.collection('users').document(user_id)
+                                user_ref.update({
+                                    "plan": plan,
+                                    "subscription_updated_at": datetime.now(),
+                                    "mp_subscription_id": preapproval_id
+                                })
+                                logger.info(f"✅ Plan actualizado para usuario {user_id}: {plan}")
+                                
+                                # Log del usuario actualizado
+                                user_doc = user_ref.get()
+                                if user_doc.exists:
+                                    logger.info(f"Usuario actualizado: {user_doc.to_dict()}")
+                            else:
+                                logger.error(f"No se encontró plan para MP Plan ID: {mp_plan_id}")
                         else:
-                            logger.error(f"No se encontró plan para MP Plan ID: {mp_plan_id}")
+                            logger.info(f"Suscripción no autorizada o datos incompletos. Status: {status}")
                     else:
-                        logger.info(f"Suscripción no autorizada o datos incompletos. Status: {status}")
-                else:
-                    logger.error("No se pudo obtener información de la suscripción")
+                        logger.error("No se pudo obtener información de la suscripción")
+                except Exception as mp_error:
+                    logger.error(f"Error con Mercado Pago: {mp_error}")
+                    return "Error con Mercado Pago", 500
                 
         elif notification_type == 'subscription_preapproval':
             # Notificación específica de suscripción
             logger.info("Notificación de suscripción recibida")
             # Procesar igual que preapproval
             preapproval_id = body['data']['id']
-            preapproval = sdk.preapproval().get(preapproval_id)
-            
-            if preapproval['response']:
-                status = preapproval['response'].get('status')
-                user_id = preapproval['response'].get('external_reference')
-                mp_plan_id = preapproval['response'].get('preapproval_plan_id')
+            try:
+                sdk = mercadopago.SDK(os.environ['MERCADOPAGO_ACCESS_TOKEN'])
+                preapproval = sdk.preapproval().get(preapproval_id)
                 
-                if status == 'authorized' and user_id and mp_plan_id:
-                    plan = next((k for k, v in MP_PLAN_IDS.items() if v == mp_plan_id), None)
-                    if plan:
-                        user_ref = db.collection('users').document(user_id)
-                        user_ref.update({
-                            "plan": plan,
-                            "subscription_updated_at": datetime.now(),
-                            "mp_subscription_id": preapproval_id
-                        })
-                        logger.info(f"Plan actualizado vía subscription_preapproval: {plan}")
+                if preapproval['response']:
+                    status = preapproval['response'].get('status')
+                    user_id = preapproval['response'].get('external_reference')
+                    mp_plan_id = preapproval['response'].get('preapproval_plan_id')
+                    
+                    if status == 'authorized' and user_id and mp_plan_id:
+                        plan = next((k for k, v in MP_PLAN_IDS.items() if v == mp_plan_id), None)
+                        if plan:
+                            user_ref = db.collection('users').document(user_id)
+                            user_ref.update({
+                                "plan": plan,
+                                "subscription_updated_at": datetime.now(),
+                                "mp_subscription_id": preapproval_id
+                            })
+                            logger.info(f"Plan actualizado vía subscription_preapproval: {plan}")
+            except Exception as mp_error:
+                logger.error(f"Error con Mercado Pago en subscription_preapproval: {mp_error}")
+                return "Error con Mercado Pago", 500
         else:
             logger.info(f"Tipo de notificación no manejado: {notification_type}")
             

@@ -588,44 +588,67 @@ def mercado_pago_webhook():
             preapproval_id = body['data']['id']
             logger.info(f"Preapproval ID: {preapproval_id}")
             
-            # Obtener detalles de la suscripción
-            preapproval = sdk.preapproval().get(preapproval_id)
-            logger.info(f"Preapproval response: {preapproval}")
+            # Verificar si es un test (ID que empiece con 'test_')
+            is_test = preapproval_id.startswith('test_')
             
-            if preapproval['response']:
-                status = preapproval['response'].get('status')
-                user_id = preapproval['response'].get('external_reference')
-                mp_plan_id = preapproval['response'].get('preapproval_plan_id')
+            if is_test:
+                logger.info("🔄 Procesando TEST de webhook")
+                # Para tests, usar datos hardcodeados o del body
+                test_user_id = body.get('test_user_id', 'test_user_123')
+                test_plan = body.get('test_plan', 'esencial')
                 
-                logger.info(f"Status: {status}")
-                logger.info(f"User ID: {user_id}")
-                logger.info(f"MP Plan ID: {mp_plan_id}")
+                logger.info(f"Test User ID: {test_user_id}")
+                logger.info(f"Test Plan: {test_plan}")
                 
-                if status == 'authorized' and user_id and mp_plan_id:
-                    # Encontrar el plan correspondiente
-                    plan = next((k for k, v in MP_PLAN_IDS.items() if v == mp_plan_id), None)
-                    logger.info(f"Plan encontrado: {plan}")
-                    
-                    if plan:
-                        # Actualizar el plan del usuario en Firestore
-                        user_ref = db.collection('users').document(user_id)
-                        user_ref.update({
-                            "plan": plan,
-                            "subscription_updated_at": datetime.now(),
-                            "mp_subscription_id": preapproval_id
-                        })
-                        logger.info(f"Plan actualizado para usuario {user_id}: {plan}")
-                        
-                        # Log del usuario actualizado
-                        user_doc = user_ref.get()
-                        if user_doc.exists:
-                            logger.info(f"Usuario actualizado: {user_doc.to_dict()}")
-                    else:
-                        logger.error(f"No se encontró plan para MP Plan ID: {mp_plan_id}")
-                else:
-                    logger.info(f"Suscripción no autorizada o datos incompletos. Status: {status}")
+                # Actualizar el plan del usuario en Firestore
+                user_ref = db.collection('users').document(test_user_id)
+                user_ref.update({
+                    "plan": test_plan,
+                    "subscription_updated_at": datetime.now(),
+                    "mp_subscription_id": preapproval_id,
+                    "is_test": True
+                })
+                logger.info(f"✅ Plan actualizado para test - Usuario {test_user_id}: {test_plan}")
+                
             else:
-                logger.error("No se pudo obtener información de la suscripción")
+                # Obtener detalles de la suscripción real
+                preapproval = sdk.preapproval().get(preapproval_id)
+                logger.info(f"Preapproval response: {preapproval}")
+                
+                if preapproval['response']:
+                    status = preapproval['response'].get('status')
+                    user_id = preapproval['response'].get('external_reference')
+                    mp_plan_id = preapproval['response'].get('preapproval_plan_id')
+                    
+                    logger.info(f"Status: {status}")
+                    logger.info(f"User ID: {user_id}")
+                    logger.info(f"MP Plan ID: {mp_plan_id}")
+                    
+                    if status == 'authorized' and user_id and mp_plan_id:
+                        # Encontrar el plan correspondiente
+                        plan = next((k for k, v in MP_PLAN_IDS.items() if v == mp_plan_id), None)
+                        logger.info(f"Plan encontrado: {plan}")
+                        
+                        if plan:
+                            # Actualizar el plan del usuario en Firestore
+                            user_ref = db.collection('users').document(user_id)
+                            user_ref.update({
+                                "plan": plan,
+                                "subscription_updated_at": datetime.now(),
+                                "mp_subscription_id": preapproval_id
+                            })
+                            logger.info(f"✅ Plan actualizado para usuario {user_id}: {plan}")
+                            
+                            # Log del usuario actualizado
+                            user_doc = user_ref.get()
+                            if user_doc.exists:
+                                logger.info(f"Usuario actualizado: {user_doc.to_dict()}")
+                        else:
+                            logger.error(f"No se encontró plan para MP Plan ID: {mp_plan_id}")
+                    else:
+                        logger.info(f"Suscripción no autorizada o datos incompletos. Status: {status}")
+                else:
+                    logger.error("No se pudo obtener información de la suscripción")
                 
         elif notification_type == 'subscription_preapproval':
             # Notificación específica de suscripción

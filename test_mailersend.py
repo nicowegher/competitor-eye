@@ -8,7 +8,7 @@ destino = "nicolas.wegher@gmail.com"  # Cambia esto por tu email real
 
 mailer = emails.NewEmail(api_key)
 mail_body = {}
-mailer.set_mail_from({"email": sender, "name": "Scraper Tarifas Hoteles"}, mail_body)
+mailer.set_mail_from(mail_from, mail_body)
 mailer.set_mail_to([{"email": destino}], mail_body)
 mailer.set_subject("Prueba manual de MailerSend", mail_body)
 mailer.set_html_content("<h1>¡Funciona!</h1><p>Este es un correo de prueba desde MailerSend.</p>", mail_body)
@@ -16,3 +16,5 @@ mailer.set_plaintext_content("Este es un correo de prueba desde MailerSend.", ma
 response = mailer.send(mail_body)
 print(f"Status code: {getattr(response, 'status_code', 'N/A')}")
 print(f"Response: {getattr(response, 'text', str(response))}")
+
+mail_from = {"name": "Scraper Tarifas Hoteles", "email": os.environ.get("MAILERSEND_SENDER_EMAIL", "no-reply@tudominio.com")}

@@ -698,6 +698,41 @@ def mercado_pago_webhook():
         logger.error(f"Traceback: {traceback.format_exc()}")
         return "Error", 500
 
+# --- ENDPOINT DE DEBUG ---
+@app.route('/debug', methods=['POST'])
+def debug_endpoint():
+    try:
+        logger.info("=== DEBUG ENDPOINT ===")
+        body = request.get_json()
+        logger.info(f"Body recibido: {body}")
+        
+        # Test de Firestore
+        try:
+            test_ref = db.collection('users').document('test_user_123')
+            test_ref.set({
+                "email": "test@example.com",
+                "plan": "free_trial",
+                "debug_test": True,
+                "timestamp": datetime.now()
+            }, merge=True)
+            logger.info("✅ Firestore funcionando")
+        except Exception as firestore_error:
+            logger.error(f"❌ Error en Firestore: {firestore_error}")
+            return {"error": f"Firestore error: {str(firestore_error)}"}, 500
+        
+        # Test de variables de entorno
+        mp_token = os.environ.get('MERCADOPAGO_ACCESS_TOKEN')
+        if mp_token:
+            logger.info("✅ MERCADOPAGO_ACCESS_TOKEN configurado")
+        else:
+            logger.error("❌ MERCADOPAGO_ACCESS_TOKEN no configurado")
+        
+        return {"status": "debug successful", "body": body}, 200
+        
+    except Exception as e:
+        logger.error(f"Error en debug endpoint: {e}")
+        return {"error": str(e)}, 500
+
 # --- CONFIGURACIÓN PARA RENDER.COM ---
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

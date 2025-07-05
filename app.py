@@ -567,24 +567,99 @@ def create_subscription_checkout():
 # --- Webhook de Mercado Pago para actualizar plan del usuario ---
 @app.route('/mercado-pago-webhook', methods=['POST'])
 def mercado_pago_webhook():
-    sdk = mercadopago.SDK(os.environ['MERCADOPAGO_ACCESS_TOKEN'])
-    body = request.get_json()
-    if body and body.get('type') == 'preapproval':
-        try:
+    try:
+        logger.info("=== WEBHOOK MERCADO PAGO RECIBIDO ===")
+        logger.info(f"Headers: {dict(request.headers)}")
+        logger.info(f"Body: {request.get_json()}")
+        
+        sdk = mercadopago.SDK(os.environ['MERCADOPAGO_ACCESS_TOKEN'])
+        body = request.get_json()
+        
+        if not body:
+            logger.error("Body vacío en webhook")
+            return "Bad Request", 400
+            
+        # Manejar diferentes tipos de notificaciones
+        notification_type = body.get('type')
+        logger.info(f"Tipo de notificación: {notification_type}")
+        
+        if notification_type == 'preapproval':
+            # Notificación de suscripción
             preapproval_id = body['data']['id']
+            logger.info(f"Preapproval ID: {preapproval_id}")
+            
+            # Obtener detalles de la suscripción
             preapproval = sdk.preapproval().get(preapproval_id)
-            status = preapproval['response'].get('status')
-            if status == 'authorized':
+            logger.info(f"Preapproval response: {preapproval}")
+            
+            if preapproval['response']:
+                status = preapproval['response'].get('status')
                 user_id = preapproval['response'].get('external_reference')
                 mp_plan_id = preapproval['response'].get('preapproval_plan_id')
-                plan = next((k for k, v in MP_PLAN_IDS.items() if v == mp_plan_id), None)
-                if user_id and plan:
-                    user_ref = db.collection('users').document(user_id)
-                    user_ref.update({"plan": plan})
-        except Exception as e:
-            print(f"Error en webhook Mercado Pago: {e}")
-            return "Error", 500
-    return "OK", 200
+                
+                logger.info(f"Status: {status}")
+                logger.info(f"User ID: {user_id}")
+                logger.info(f"MP Plan ID: {mp_plan_id}")
+                
+                if status == 'authorized' and user_id and mp_plan_id:
+                    # Encontrar el plan correspondiente
+                    plan = next((k for k, v in MP_PLAN_IDS.items() if v == mp_plan_id), None)
+                    logger.info(f"Plan encontrado: {plan}")
+                    
+                    if plan:
+                        # Actualizar el plan del usuario en Firestore
+                        user_ref = db.collection('users').document(user_id)
+                        user_ref.update({
+                            "plan": plan,
+                            "subscription_updated_at": datetime.now(),
+                            "mp_subscription_id": preapproval_id
+                        })
+                        logger.info(f"Plan actualizado para usuario {user_id}: {plan}")
+                        
+                        # Log del usuario actualizado
+                        user_doc = user_ref.get()
+                        if user_doc.exists:
+                            logger.info(f"Usuario actualizado: {user_doc.to_dict()}")
+                    else:
+                        logger.error(f"No se encontró plan para MP Plan ID: {mp_plan_id}")
+                else:
+                    logger.info(f"Suscripción no autorizada o datos incompletos. Status: {status}")
+            else:
+                logger.error("No se pudo obtener información de la suscripción")
+                
+        elif notification_type == 'subscription_preapproval':
+            # Notificación específica de suscripción
+            logger.info("Notificación de suscripción recibida")
+            # Procesar igual que preapproval
+            preapproval_id = body['data']['id']
+            preapproval = sdk.preapproval().get(preapproval_id)
+            
+            if preapproval['response']:
+                status = preapproval['response'].get('status')
+                user_id = preapproval['response'].get('external_reference')
+                mp_plan_id = preapproval['response'].get('preapproval_plan_id')
+                
+                if status == 'authorized' and user_id and mp_plan_id:
+                    plan = next((k for k, v in MP_PLAN_IDS.items() if v == mp_plan_id), None)
+                    if plan:
+                        user_ref = db.collection('users').document(user_id)
+                        user_ref.update({
+                            "plan": plan,
+                            "subscription_updated_at": datetime.now(),
+                            "mp_subscription_id": preapproval_id
+                        })
+                        logger.info(f"Plan actualizado vía subscription_preapproval: {plan}")
+        else:
+            logger.info(f"Tipo de notificación no manejado: {notification_type}")
+            
+        logger.info("=== WEBHOOK PROCESADO EXITOSAMENTE ===")
+        return "OK", 200
+        
+    except Exception as e:
+        logger.error(f"Error en webhook Mercado Pago: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return "Error", 500
 
 # --- CONFIGURACIÓN PARA RENDER.COM ---
 if __name__ == "__main__":

@@ -572,6 +572,20 @@ def mercado_pago_webhook():
         logger.info(f"Headers: {dict(request.headers)}")
         logger.info(f"Body: {request.get_json()}")
         
+        # Validación de clave secreta
+        mp_secret = os.environ.get('MP_WEBHOOK_SECRET')
+        received_secret = request.headers.get('x-signature')
+        if mp_secret:
+            if not received_secret:
+                logger.error("❌ Falta la cabecera x-signature en el webhook")
+                return "Forbidden: missing signature", 403
+            if received_secret != mp_secret:
+                logger.error(f"❌ Clave secreta inválida. Recibida: {received_secret}")
+                return "Forbidden: invalid signature", 403
+            logger.info("✅ Clave secreta validada correctamente")
+        else:
+            logger.warning("⚠️ No hay clave secreta configurada en MP_WEBHOOK_SECRET")
+        
         body = request.get_json()
         
         if not body:

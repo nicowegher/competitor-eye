@@ -181,10 +181,12 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
         # Identificar hotel principal (primero en la lista) y competidores
         hotel_principal = hotelNames[0] if hotelNames else None
         competidores = hotelNames[1:] if len(hotelNames) > 1 else []
-        
-        # Crear filas adicionales para las métricas
-        metricas_adicionales = []
-        
+
+        # Inicializar listas para cada métrica
+        promedio_competidores_row = {"Hotel Name": "Tarifa promedio de competidores", "URL": ""}
+        disponibilidad_row = {"Hotel Name": "Disponibilidad de la oferta (%)", "URL": ""}
+        diferencia_row = {"Hotel Name": "Diferencia % vs. competidores", "URL": ""}
+
         for date in all_dates:
             # Obtener precios válidos para esta fecha
             precios_validos = {}
@@ -196,66 +198,71 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
                         precios_validos[name] = float(price)
                     except:
                         continue
-            
+
             # 1. Calcular tarifa promedio de competidores (ignorando N/A y hotel principal)
             precios_competidores = []
             for name in competidores:
                 precio = precios_validos.get(name)
                 if precio is not None and isinstance(precio, (int, float)):
                     precios_competidores.append(precio)
-            
+
             promedio_competidores = None
             if precios_competidores:
                 promedio_competidores = sum(precios_competidores) / len(precios_competidores)
-            
+
             # 2. Calcular disponibilidad de la oferta (%)
             total_hoteles = len(hotelNames)
             hoteles_con_precio = len([name for name in hotelNames if precios_validos.get(name) is not None])
             disponibilidad_porcentaje = round((hoteles_con_precio / total_hoteles) * 100) if total_hoteles > 0 else 0
             disponibilidad = f"{disponibilidad_porcentaje}%"
-            
+
             # 3. Calcular diferencia porcentual del hotel principal vs promedio de competidores
             diferencia_porcentual = None
             precio_principal = precios_validos.get(hotel_principal)
             if precio_principal is not None and promedio_competidores is not None and promedio_competidores > 0:
                 diferencia = ((precio_principal - promedio_competidores) / promedio_competidores) * 100
                 diferencia_porcentual = f"{diferencia:+.1f}%" if diferencia != 0 else "0.0%"
-            
-            # Agregar métricas al chartData
+
+            # Agregar métricas a las filas únicas
+            promedio_competidores_row[date] = str(promedio_competidores) if promedio_competidores is not None else ""
+            disponibilidad_row[date] = disponibilidad if disponibilidad is not None else ""
+            diferencia_row[date] = str(diferencia_porcentual) if diferencia_porcentual is not None else ""
+
+            # Agregar métricas al chartData (para frontend)
             chartData.append({
                 "date": date,
                 "Tarifa promedio de competidores": promedio_competidores,
                 "Disponibilidad de la oferta (%)": disponibilidad,
                 "Diferencia % vs. competidores": diferencia_porcentual
             })
-            
-            # Agregar métricas al DataFrame para Excel
-            metricas_adicionales.append({
-                "Hotel Name": "Tarifa promedio de competidores",
-                "URL": "",
-                date: promedio_competidores
-            })
-            metricas_adicionales.append({
-                "Hotel Name": "Disponibilidad de la oferta (%)",
-                "URL": "",
-                date: disponibilidad
-            })
-            metricas_adicionales.append({
-                "Hotel Name": "Diferencia % vs. competidores",
-                "URL": "",
-                date: diferencia_porcentual
-            })
-        
-        # Agregar métricas al DataFrame original
-        result.extend(metricas_adicionales)
-        
+
+        # Agregar métricas al DataFrame original (al final)
+        result.append(promedio_competidores_row)
+        result.append(disponibilidad_row)
+        result.append(diferencia_row)
+
+        # --- FORMATO DE NOMBRE DE ARCHIVO ---
+        import re
+        def limpiar_nombre(nombre):
+            if not nombre:
+                return "SIN_NOMBRE"
+            nombre = nombre.upper()
+            nombre = re.sub(r"[ÁÀÂÄ]", "A", nombre)
+            nombre = re.sub(r"[ÉÈÊË]", "E", nombre)
+            nombre = re.sub(r"[ÍÌÎÏ]", "I", nombre)
+            nombre = re.sub(r"[ÓÒÔÖ]", "O", nombre)
+            nombre = re.sub(r"[ÚÙÛÜ]", "U", nombre)
+            nombre = re.sub(r"[^A-Z0-9]", "_", nombre)
+            nombre = re.sub(r"_+", "_", nombre)
+            return nombre.strip("_")
+        set_name_limpio = limpiar_nombre(setName) if setName else "SIN_NOMBRE"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        base_filename = f"HotelRateShopper_{set_name_limpio}_{timestamp}"
+        csv_filename = f"{base_filename}.csv"
+        xlsx_filename = f"{base_filename}.xlsx"
+
         # Generar archivos CON las métricas incluidas
         df = pd.DataFrame(result)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        csv_filename = f"run-scraper_{timestamp}.csv"
-        xlsx_filename = f"run-scraper_{timestamp}.xlsx"
-        
-        # Guardar archivos localmente
         df.to_csv(csv_filename, index=False)
         df.to_excel(xlsx_filename, index=False)
         

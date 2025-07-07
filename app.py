@@ -295,7 +295,7 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
         if userEmail:
             try:
                 mailer = emails.NewEmail(os.environ.get("MAILERSEND_API_KEY"))
-                mail_from = {"name": "Scraper Tarifas Hoteles", "email": os.environ.get("MAILERSEND_SENDER_EMAIL", "no-reply@tudominio.com")}
+                mail_from = {"name": os.environ.get("MAILERSEND_SENDER_NAME", "Hotel Rate Shopper"), "email": os.environ.get("MAILERSEND_SENDER_EMAIL", "no-reply@hotelrateshopper.com")}
                 recipients = [{"email": userEmail}]
                 subject = f"¡Tu informe para '{setName or 'Hoteles'}' está listo!"
                 html_content = f'''

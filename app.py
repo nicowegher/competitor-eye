@@ -148,32 +148,6 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
         if not result:
             raise Exception("No se obtuvieron datos del scraper")
         
-        # Generar archivos
-        df = pd.DataFrame(result)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        csv_filename = f"run-scraper_{timestamp}.csv"
-        xlsx_filename = f"run-scraper_{timestamp}.xlsx"
-        
-        # Guardar archivos localmente
-        df.to_csv(csv_filename, index=False)
-        df.to_excel(xlsx_filename, index=False)
-        
-        # Subir a GCS
-        blob_csv = bucket.blob(f"reports/{csv_filename}")
-        blob_xlsx = bucket.blob(f"reports/{xlsx_filename}")
-        blob_csv.upload_from_filename(csv_filename)
-        blob_xlsx.upload_from_filename(xlsx_filename)
-        
-        # Hacer públicos
-        blob_csv.make_public()
-        blob_xlsx.make_public()
-        csv_url = blob_csv.public_url
-        xlsx_url = blob_xlsx.public_url
-        
-        # Limpiar archivos locales
-        os.remove(csv_filename)
-        os.remove(xlsx_filename)
-        
         # --- ENRIQUECER DATOS PARA GRÁFICOS ---
         # 1. Extraer nombres de hoteles en orden
         hotelNames = [hotel["Hotel Name"] for hotel in result]
@@ -202,6 +176,102 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
                     except:
                         day_obj[name] = None
             chartData.append(day_obj)
+        
+        # --- CALCULAR MÉTRICAS ADICIONALES ---
+        # Identificar hotel principal (primero en la lista) y competidores
+        hotel_principal = hotelNames[0] if hotelNames else None
+        competidores = hotelNames[1:] if len(hotelNames) > 1 else []
+        
+        # Crear filas adicionales para las métricas
+        metricas_adicionales = []
+        
+        for date in all_dates:
+            # Obtener precios válidos para esta fecha
+            precios_validos = {}
+            for hotel in result:
+                name = hotel["Hotel Name"]
+                price = hotel.get(date, None)
+                if price and price != "N/A":
+                    try:
+                        precios_validos[name] = float(price)
+                    except:
+                        continue
+            
+            # 1. Calcular tarifa promedio de competidores (ignorando N/A y hotel principal)
+            precios_competidores = []
+            for name in competidores:
+                precio = precios_validos.get(name)
+                if precio is not None and isinstance(precio, (int, float)):
+                    precios_competidores.append(precio)
+            
+            promedio_competidores = None
+            if precios_competidores:
+                promedio_competidores = sum(precios_competidores) / len(precios_competidores)
+            
+            # 2. Calcular disponibilidad de la oferta (%)
+            total_hoteles = len(hotelNames)
+            hoteles_con_precio = len([name for name in hotelNames if precios_validos.get(name) is not None])
+            disponibilidad_porcentaje = round((hoteles_con_precio / total_hoteles) * 100) if total_hoteles > 0 else 0
+            disponibilidad = f"{disponibilidad_porcentaje}%"
+            
+            # 3. Calcular diferencia porcentual del hotel principal vs promedio de competidores
+            diferencia_porcentual = None
+            precio_principal = precios_validos.get(hotel_principal)
+            if precio_principal is not None and promedio_competidores is not None and promedio_competidores > 0:
+                diferencia = ((precio_principal - promedio_competidores) / promedio_competidores) * 100
+                diferencia_porcentual = f"{diferencia:+.1f}%" if diferencia != 0 else "0.0%"
+            
+            # Agregar métricas al chartData
+            chartData.append({
+                "date": date,
+                "Tarifa promedio de competidores": promedio_competidores,
+                "Disponibilidad de la oferta (%)": disponibilidad,
+                "Diferencia % vs. competidores": diferencia_porcentual
+            })
+            
+            # Agregar métricas al DataFrame para Excel
+            metricas_adicionales.append({
+                "Hotel Name": "Tarifa promedio de competidores",
+                "URL": "",
+                date: promedio_competidores
+            })
+            metricas_adicionales.append({
+                "Hotel Name": "Disponibilidad de la oferta (%)",
+                "URL": "",
+                date: disponibilidad
+            })
+            metricas_adicionales.append({
+                "Hotel Name": "Diferencia % vs. competidores",
+                "URL": "",
+                date: diferencia_porcentual
+            })
+        
+        # Agregar métricas al DataFrame original
+        result.extend(metricas_adicionales)
+        
+        # Generar archivos CON las métricas incluidas
+        df = pd.DataFrame(result)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_filename = f"run-scraper_{timestamp}.csv"
+        xlsx_filename = f"run-scraper_{timestamp}.xlsx"
+        
+        # Guardar archivos localmente
+        df.to_csv(csv_filename, index=False)
+        df.to_excel(xlsx_filename, index=False)
+        
+        # Subir a GCS
+        blob_csv = bucket.blob(f"reports/{csv_filename}")
+        blob_xlsx = bucket.blob(f"reports/{xlsx_filename}")
+        blob_csv.upload_from_filename(csv_filename)
+        blob_xlsx.upload_from_filename(xlsx_filename)
+        
+        # Hacer públicos
+        blob_csv.make_public()
+        blob_xlsx.make_public()
+        csv_url = blob_csv.public_url
+        xlsx_url = blob_xlsx.public_url
+        
+
         
         # Actualizar Firestore con éxito usando taskId
         doc_ref.update({
@@ -330,6 +400,9 @@ def run_scraper():
     
     try:
         data = request.get_json()
+        if data is None:
+            return jsonify({"error": "Invalid JSON data"}), 400
+        
         taskId = data.get("taskId")
         uid = data.get("userId")
         days = data.get("daysToScrape", 2)
@@ -452,6 +525,9 @@ def execute_scheduled_tasks():
 @app.route('/init-user', methods=['POST'])
 def init_user():
     data = request.get_json()
+    if data is None:
+        return {"error": "Invalid JSON data"}, 400
+    
     uid = data.get('uid')
     email = data.get('email')
     if not uid or not email:
@@ -468,6 +544,9 @@ def init_user():
 @app.route('/crear-grupo', methods=['POST'])
 def crear_grupo():
     data = request.get_json()
+    if data is None:
+        return {"error": "Invalid JSON data"}, 400
+    
     uid = data.get('uid')
     plan = get_user_plan(uid)
     limits = PLAN_LIMITS.get(plan, PLAN_LIMITS['free_trial'])
@@ -483,6 +562,9 @@ def crear_grupo():
 @app.route('/agregar-competidor', methods=['POST'])
 def agregar_competidor():
     data = request.get_json()
+    if data is None:
+        return {"error": "Invalid JSON data"}, 400
+    
     uid = data.get('uid')
     set_id = data.get('setId')
     plan = get_user_plan(uid)
@@ -501,6 +583,9 @@ def agregar_competidor():
 @app.route('/configurar-dias', methods=['POST'])
 def configurar_dias():
     data = request.get_json()
+    if data is None:
+        return {"error": "Invalid JSON data"}, 400
+    
     uid = data.get('uid')
     days = data.get('daysToScrape')
     plan = get_user_plan(uid)
@@ -514,6 +599,9 @@ def configurar_dias():
 @app.route('/configurar-schedule', methods=['POST'])
 def configurar_schedule():
     data = request.get_json()
+    if data is None:
+        return {"error": "Invalid JSON data"}, 400
+    
     uid = data.get('uid')
     schedule = data.get('schedule')
     plan = get_user_plan(uid)
@@ -529,6 +617,9 @@ def configurar_schedule():
 @app.route('/create-subscription-checkout', methods=['POST'])
 def create_subscription_checkout():
     data = request.get_json()
+    if data is None:
+        return {"error": "Invalid JSON data"}, 400
+    
     plan_id = data.get('planId')
     token = request.headers.get('Authorization', '').replace('Bearer ', '')
     if not plan_id or plan_id not in MP_PLAN_IDS:
@@ -588,7 +679,7 @@ def mercado_pago_webhook():
         
         body = request.get_json()
         
-        if not body:
+        if body is None:
             logger.error("Body vacío en webhook")
             return "Bad Request", 400
             
@@ -745,6 +836,142 @@ def debug_endpoint():
         
     except Exception as e:
         logger.error(f"Error en debug endpoint: {e}")
+        return {"error": str(e)}, 500
+
+# --- ENDPOINT DE PRUEBA PARA MÉTRICAS ---
+@app.route('/test-metricas', methods=['GET'])
+def test_metricas():
+    try:
+        # Datos de prueba simulados
+        datos_prueba = [
+            {
+                "Hotel Name": "Hotel Principal",
+                "URL": "https://example.com/hotel1",
+                "2024-01-15": 150.0,
+                "2024-01-16": 160.0,
+                "2024-01-17": 155.0
+            },
+            {
+                "Hotel Name": "Competidor 1",
+                "URL": "https://example.com/hotel2",
+                "2024-01-15": 140.0,
+                "2024-01-16": 150.0,
+                "2024-01-17": "N/A"
+            },
+            {
+                "Hotel Name": "Competidor 2",
+                "URL": "https://example.com/hotel3",
+                "2024-01-15": 145.0,
+                "2024-01-16": "N/A",
+                "2024-01-17": 150.0
+            }
+        ]
+        
+        # Extraer nombres de hoteles
+        hotelNames = [hotel["Hotel Name"] for hotel in datos_prueba]
+        hotel_principal = hotelNames[0]
+        competidores = hotelNames[1:]
+        
+        # Extraer fechas únicas
+        all_dates = set()
+        for hotel in datos_prueba:
+            for k in hotel.keys():
+                if k not in ("Hotel Name", "URL"):
+                    all_dates.add(k)
+        all_dates = sorted(all_dates)
+        
+        # Calcular métricas
+        metricas_resultado = []
+        chartData = []
+        
+        for date in all_dates:
+            # Obtener precios válidos para esta fecha
+            precios_validos = {}
+            for hotel in datos_prueba:
+                name = hotel["Hotel Name"]
+                price = hotel.get(date, None)
+                if price and price != "N/A":
+                    try:
+                        precios_validos[name] = float(price)
+                    except:
+                        continue
+            
+            # 1. Calcular tarifa promedio de competidores
+            precios_competidores = []
+            for name in competidores:
+                precio = precios_validos.get(name)
+                if precio is not None and isinstance(precio, (int, float)):
+                    precios_competidores.append(precio)
+            
+            promedio_competidores = None
+            if precios_competidores:
+                promedio_competidores = sum(precios_competidores) / len(precios_competidores)
+            
+            # 2. Calcular disponibilidad de la oferta (%)
+            total_hoteles = len(hotelNames)
+            hoteles_con_precio = len([name for name in hotelNames if precios_validos.get(name) is not None])
+            disponibilidad_porcentaje = round((hoteles_con_precio / total_hoteles) * 100) if total_hoteles > 0 else 0
+            disponibilidad = f"{disponibilidad_porcentaje}%"
+            
+            # 3. Calcular diferencia porcentual del hotel principal vs promedio de competidores
+            diferencia_porcentual = None
+            precio_principal = precios_validos.get(hotel_principal)
+            if precio_principal is not None and promedio_competidores is not None and promedio_competidores > 0:
+                diferencia = ((precio_principal - promedio_competidores) / promedio_competidores) * 100
+                diferencia_porcentual = f"{diferencia:+.1f}%" if diferencia != 0 else "0.0%"
+            
+            # Agregar métricas al resultado
+            metricas_resultado.append({
+                "fecha": date,
+                "tarifa_promedio_competidores": promedio_competidores,
+                "disponibilidad_oferta": disponibilidad,
+                "diferencia_porcentual": diferencia_porcentual,
+                "precios_competidores": precios_competidores,
+                "precio_principal": precio_principal
+            })
+            
+            # Agregar al chartData
+            chartData.append({
+                "date": date,
+                "Tarifa promedio de competidores": promedio_competidores,
+                "Disponibilidad de la oferta (%)": disponibilidad,
+                "Diferencia % vs. competidores": diferencia_porcentual
+            })
+        
+        # Crear DataFrame con métricas para Excel
+        datos_con_metricas = datos_prueba.copy()
+        for date in all_dates:
+            metricas_fecha = next(m for m in metricas_resultado if m["fecha"] == date)
+            
+            datos_con_metricas.append({
+                "Hotel Name": "Tarifa promedio de competidores",
+                "URL": "",
+                date: metricas_fecha["tarifa_promedio_competidores"]
+            })
+            datos_con_metricas.append({
+                "Hotel Name": "Disponibilidad de la oferta (%)",
+                "URL": "",
+                date: metricas_fecha["disponibilidad_oferta"]
+            })
+            datos_con_metricas.append({
+                "Hotel Name": "Diferencia % vs. competidores",
+                "URL": "",
+                date: metricas_fecha["diferencia_porcentual"]
+            })
+        
+        return {
+            "success": True,
+            "datos_originales": datos_prueba,
+            "metricas_calculadas": metricas_resultado,
+            "datos_con_metricas": datos_con_metricas,
+            "chartData": chartData,
+            "hotel_principal": hotel_principal,
+            "competidores": competidores,
+            "fechas": all_dates
+        }
+        
+    except Exception as e:
+        logger.error(f"Error en test_metricas: {e}")
         return {"error": str(e)}, 500
 
 # --- CONFIGURACIÓN PARA RENDER.COM ---

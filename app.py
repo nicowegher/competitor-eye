@@ -299,9 +299,15 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
                 recipients = [{"email": userEmail}]
                 subject = f"¡Tu informe para '{setName or 'Hoteles'}' está listo!"
                 html_content = f'''
-                <h1>¡Informe Completado!</h1>
+                <h1>¡Tu informe está listo!</h1>
                 <p>Hola,</p>
-                <p>Tu informe de precios para el grupo competitivo "<strong>{setName or 'Hoteles'}</strong>" ya está disponible para descargar.</p>
+                <p>Tu informe de precios para el grupo competitivo "<strong>{setName or 'Hoteles'}"</strong> ya está disponible.</p>
+                <p style="font-size: 1.1em; font-weight: bold;">
+                  <a href="https://www.hotelrateshopper.com" style="padding: 12px 20px; background-color: #28a745; color: white; text-decoration: none; border-radius: 5px; font-size: 1.1em;">
+                    Ver mi informe en la plataforma
+                  </a>
+                </p>
+                <p>También puedes descargar el informe directamente desde este correo:</p>
                 <p>
                   <a href="{xlsx_url}" style="padding: 10px 15px; background-color: #007BFF; color: white; text-decoration: none; border-radius: 5px;">
                     Descargar Informe (Excel)
@@ -312,10 +318,11 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
                     Descargar en formato .CSV
                   </a>
                 </p>
-                <p>Gracias por usar nuestros servicios.</p>
+                <p>Gracias por usar <a href="https://www.hotelrateshopper.com">HotelRateShopper.com</a></p>
                 '''
                 mail_body = {}
                 mailer.set_mail_from(mail_from, mail_body)
+                mailer.set_reply_to({"email": "nicolas.wegher@gmail.com", "name": "Nicolás Wegher"}, mail_body)
                 mailer.set_mail_to(recipients, mail_body)
                 mailer.set_subject(subject, mail_body)
                 mailer.set_html_content(html_content, mail_body)

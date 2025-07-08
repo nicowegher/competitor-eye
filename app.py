@@ -185,7 +185,7 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
         # Inicializar listas para cada métrica
         promedio_competidores_row = {"Hotel Name": "Tarifa promedio de competidores", "URL": ""}
         disponibilidad_row = {"Hotel Name": "Disponibilidad de la oferta (%)", "URL": ""}
-        diferencia_row = {"Hotel Name": "Diferencia % vs. competidores", "URL": ""}
+        diferencia_row = {"Hotel Name": "Diferencia de mi tarifa vs. la tarifa promedio de los competidores (%)", "URL": ""}
 
         for date in all_dates:
             # Obtener precios válidos para esta fecha
@@ -233,7 +233,7 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
                 "date": date,
                 "Tarifa promedio de competidores": promedio_competidores,
                 "Disponibilidad de la oferta (%)": disponibilidad,
-                "Diferencia % vs. competidores": diferencia_porcentual
+                "Diferencia de mi tarifa vs. la tarifa promedio de los competidores (%)": diferencia_porcentual
             })
 
         # Agregar métricas al DataFrame original (al final)
@@ -654,7 +654,7 @@ def create_subscription_checkout():
         "preapproval_plan_id": MP_PLAN_IDS[plan_id],
         "payer_email": user_email,
         "external_reference": user_id,
-        "back_url": "https://TU-DOMINIO.com/dashboard"
+        "back_url": "https://hotelrateshopper.com/dashboard"
     }
     try:
         result = sdk.preapproval().create(preference)
@@ -949,7 +949,7 @@ def test_metricas():
                 "date": date,
                 "Tarifa promedio de competidores": promedio_competidores,
                 "Disponibilidad de la oferta (%)": disponibilidad,
-                "Diferencia % vs. competidores": diferencia_porcentual
+                "Diferencia de mi tarifa vs. la tarifa promedio de los competidores (%)": diferencia_porcentual
             })
         
         # Crear DataFrame con métricas para Excel
@@ -968,7 +968,7 @@ def test_metricas():
                 date: metricas_fecha["disponibilidad_oferta"]
             })
             datos_con_metricas.append({
-                "Hotel Name": "Diferencia % vs. competidores",
+                "Hotel Name": "Diferencia de mi tarifa vs. la tarifa promedio de los competidores (%)",
                 "URL": "",
                 date: metricas_fecha["diferencia_porcentual"]
             })

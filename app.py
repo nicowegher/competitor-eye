@@ -477,6 +477,7 @@ def run_scraper():
         currency = data.get("currency", "USD")
         set_id = data.get("setId") or data.get("taskId")  # Usar setId si está, sino taskId
         plan = get_user_plan(uid)
+        logger.info(f"Plan detectado para el usuario {uid}: {plan}")
         limits = PLAN_LIMITS.get(plan, PLAN_LIMITS['free_trial'])
         if days > limits['max_days']:
             return jsonify({"error": f"Tu plan solo permite hasta {limits['max_days']} días de análisis.", "code": "LIMIT_DAYS"}), 403

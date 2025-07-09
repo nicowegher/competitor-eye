@@ -5,7 +5,7 @@ import pandas as pd
 import requests
 import io
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import firebase_admin
 from firebase_admin import credentials, firestore, auth as firebase_auth
 from google.cloud import storage
@@ -83,7 +83,13 @@ PLAN_LIMITS = {
         "max_groups": 5,
         "max_competitors": 7,
         "max_days": 90,
-        "scheduling": "daily"
+        "scheduling": "weekly"
+    },
+    "custom": {
+        "max_groups": 8,
+        "max_competitors": 7,
+        "max_days": 90,
+        "scheduling": "weekly"
     }
 }
 
@@ -97,7 +103,7 @@ MP_PLAN_IDS = {
 def get_user_plan(uid):
     user_ref = db.collection('users').document(uid)
     user_doc = user_ref.get()
-    if user_doc.exists:
+    if user_doc and user_doc.exists:
         return user_doc.to_dict().get('plan', 'free_trial')
     return 'free_trial'
 
@@ -122,7 +128,7 @@ def obtener_datos_externos():
         ]
 
 # --- FUNCIÓN ASÍNCRONA PARA EL SCRAPER ---
-def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=None):
+def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=None, nights=1, currency="USD"):
     global scraper_status
     try:
         logger.info("Iniciando scraper asíncrono")
@@ -138,12 +144,14 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
             "status": "running",
             "startedAt": datetime.now(),
             "hotels": len(hotel_base_urls),
-            "days": days
+            "days": days,
+            "nights": nights,
+            "currency": currency
         })
         
         # Ejecutar scraper
-        logger.info(f"Ejecutando scraper para {len(hotel_base_urls)} hoteles por {days} días")
-        result = scrape_booking_data(hotel_base_urls, days)
+        logger.info(f"Ejecutando scraper para {len(hotel_base_urls)} hoteles por {days} días, {nights} noches, moneda {currency}")
+        result = scrape_booking_data(hotel_base_urls, days, nights, currency)
         
         if not result:
             raise Exception("No se obtuvieron datos del scraper")
@@ -357,6 +365,53 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
             "error": str(e)
         })
 
+# --- COLA DE TRABAJOS Y WORKER SIMPLE ---
+from collections import deque
+import time
+
+job_queue = deque()  # Cola de trabajos en memoria
+job_queue_lock = threading.Lock()
+worker_running = False
+
+# Estado de trabajos individuales (por taskId)
+jobs_status = {}
+
+# Worker simple que procesa la cola
+def scraper_worker():
+    global worker_running
+    while True:
+        job = None
+        with job_queue_lock:
+            if job_queue:
+                job = job_queue.popleft()
+        if job:
+            taskId = job['taskId']
+            jobs_status[taskId] = {'status': 'running', 'startedAt': datetime.now().isoformat()}
+            try:
+                run_scraper_async(
+                    job['hotel_base_urls'],
+                    job['days'],
+                    job['taskId'],
+                    job.get('userEmail'),
+                    job.get('setName'),
+                    job.get('nights', 1),
+                    job.get('currency', 'USD')
+                )
+                jobs_status[taskId]['status'] = 'completed'
+                jobs_status[taskId]['completedAt'] = datetime.now().isoformat()
+            except Exception as e:
+                jobs_status[taskId]['status'] = 'failed'
+                jobs_status[taskId]['error'] = str(e)
+                jobs_status[taskId]['completedAt'] = datetime.now().isoformat()
+        else:
+            time.sleep(2)  # Esperar antes de revisar la cola de nuevo
+
+# Lanzar el worker en background al iniciar la app
+if not worker_running:
+    worker_thread = threading.Thread(target=scraper_worker, daemon=True)
+    worker_thread.start()
+    worker_running = True
+
 # --- ENDPOINT HEALTH CHECK ---
 @app.route('/', methods=['GET'])
 def health_check():
@@ -411,56 +466,66 @@ def descargar_excel():
 @app.route('/run-scraper', methods=['POST'])
 def run_scraper():
     global scraper_status
-    
     try:
         data = request.get_json()
         if data is None:
             return jsonify({"error": "Invalid JSON data"}), 400
-        
         taskId = data.get("taskId")
         uid = data.get("userId")
         days = data.get("daysToScrape", 2)
+        nights = data.get("nights", 1)
+        currency = data.get("currency", "USD")
+        set_id = data.get("setId") or data.get("taskId")  # Usar setId si está, sino taskId
         plan = get_user_plan(uid)
         limits = PLAN_LIMITS.get(plan, PLAN_LIMITS['free_trial'])
         if days > limits['max_days']:
             return jsonify({"error": f"Tu plan solo permite hasta {limits['max_days']} días de análisis.", "code": "LIMIT_DAYS"}), 403
         if not taskId:
             return jsonify({"error": "taskId is required"}), 400
-        
         hotel_base_urls = [data["ownHotelUrl"]] + data["competitorHotelUrls"]
         userEmail = data.get("userEmail")
         setName = data.get("setName")
-        
-        # Verificar si ya hay un scraper ejecutándose
-        if scraper_status["is_running"]:
+        # --- LIMITACIÓN: 1 investigación por hora por set competitivo ---
+        una_hora_atras = datetime.utcnow() - timedelta(hours=1)
+        # Buscar reportes de este set en la última hora
+        query = db.collection("scraping_reports").where("setId", "==", set_id).where("startedAt", ">=", una_hora_atras)
+        docs = list(query.stream())
+        if docs:
             return jsonify({
-                "status": "already_running",
-                "message": "Ya hay un scraper ejecutándose"
-            }), 409
-        
-        # Iniciar scraper en un hilo separado, pasando el taskId y userEmail
-        thread = threading.Thread(
-            target=run_scraper_async,
-            args=(hotel_base_urls, days, taskId, userEmail, setName)
-        )
-        thread.daemon = True
-        thread.start()
-        
+                "status": "rate_limited",
+                "message": "Solo puedes enviar una investigación por hora para este set competitivo."
+            }), 429
+        # Encolar el trabajo
+        job = {
+            'taskId': taskId,
+            'setId': set_id,
+            'userId': uid,
+            'hotel_base_urls': hotel_base_urls,
+            'days': days,
+            'nights': nights,
+            'currency': currency,
+            'userEmail': userEmail,
+            'setName': setName,
+            'enqueuedAt': datetime.now().isoformat()
+        }
+        with job_queue_lock:
+            job_queue.append(job)
+        jobs_status[taskId] = {'status': 'queued', 'enqueuedAt': job['enqueuedAt']}
         return jsonify({
-            "status": "started",
-            "message": "Scraper iniciado correctamente",
-            "hotels": len(hotel_base_urls),
-            "days": days,
+            "status": "queued",
+            "message": "Tu investigación fue encolada y se procesará en orden. Recibirás un email al finalizar.",
             "taskId": taskId
         })
-        
     except Exception as e:
-        logger.error(f"Error al iniciar scraper: {str(e)}")
+        logger.error(f"Error al encolar scraper: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 # --- ENDPOINT PARA VERIFICAR ESTADO DEL SCRAPER ---
 @app.route('/scraper-status', methods=['GET'])
 def get_scraper_status():
+    task_id = request.args.get('taskId')
+    if task_id:
+        return jsonify(jobs_status.get(task_id, {"status": "not_found"}))
     global scraper_status
     return jsonify(scraper_status)
 
@@ -585,7 +650,7 @@ def agregar_competidor():
     limits = PLAN_LIMITS.get(plan, PLAN_LIMITS['free_trial'])
     set_ref = db.collection('competitive_sets').document(set_id)
     set_doc = set_ref.get()
-    if not set_doc.exists:
+    if not set_doc or not set_doc.exists:
         return {"error": "Grupo no encontrado.", "code": "NOT_FOUND"}, 404
     competidores = set_doc.to_dict().get('competitorHotelUrls', [])
     if len(competidores) >= limits['max_competitors']:

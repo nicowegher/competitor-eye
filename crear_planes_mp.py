@@ -31,7 +31,7 @@ PLANES_ANUALES = [
     ("Plan Market Leader Anual", PRECIO_MARKET_ANUAL, 12, "months")
 ]
 
-BACK_URL = "https://competitor-eye.onrender.com/dashboard"
+BACK_URL = "https://hotelrateshopper.com/dashboard"
 
 # --- BORRAR PLANES EXISTENTES (solo los de test) ---
 def borrar_planes_existentes():

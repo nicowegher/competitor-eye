@@ -32,7 +32,7 @@ def create_test_subscription(plan_name, user_id, user_email):
         "preapproval_plan_id": plan_id,
         "payer_email": user_email,
         "external_reference": user_id,  # Este es el UID de Firebase
-        "back_url": "https://competitor-eye.onrender.com/dashboard",
+        "back_url": "https://hotelrateshopper.com/dashboard",
         "reason": f"Suscripción de prueba - Plan {plan_name}"
     }
     

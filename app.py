@@ -486,15 +486,15 @@ def run_scraper():
         hotel_base_urls = [data["ownHotelUrl"]] + data["competitorHotelUrls"]
         userEmail = data.get("userEmail")
         setName = data.get("setName")
-        # --- LIMITACIÓN: 1 investigación por hora por set competitivo ---
-        una_hora_atras = datetime.utcnow() - timedelta(hours=1)
-        # Buscar reportes de este set en la última hora
-        query = db.collection("scraping_reports").where("setId", "==", set_id).where("startedAt", ">=", una_hora_atras)
+        # --- LIMITACIÓN: 1 investigación cada 30 minutos por set competitivo ---
+        media_hora_atras = datetime.utcnow() - timedelta(minutes=30)
+        # Buscar reportes de este set en los últimos 30 minutos
+        query = db.collection("scraping_reports").where("setId", "==", set_id).where("startedAt", ">=", media_hora_atras)
         docs = list(query.stream())
         if docs:
             return jsonify({
                 "status": "rate_limited",
-                "message": "Solo puedes enviar una investigación por hora para este set competitivo."
+                "message": "Solo puedes enviar una investigación cada 30 minutos para este set competitivo."
             }), 429
         # Encolar el trabajo
         job = {

@@ -160,13 +160,15 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
         # --- ENRIQUECER DATOS PARA GRÁFICOS ---
         # 1. Extraer nombres de hoteles en orden
         hotelNames = [hotel["Hotel Name"] for hotel in result]
-        # 2. Extraer todas las fechas únicas
+        # 2. Extraer todas las fechas únicas y ordenarlas cronológicamente
         all_dates = set()
         for hotel in result:
             for k in hotel.keys():
                 if k not in ("Hotel Name", "URL"):
                     all_dates.add(k)
-        all_dates = sorted(all_dates)  # formato YYYY-MM-DD
+        # Ordenar fechas cronológicamente
+        from datetime import datetime as dt
+        all_dates = sorted(all_dates, key=lambda x: dt.strptime(x, "%Y-%m-%d"))
         # 3. Construir chartData
         chartData = []
         for date in all_dates:
@@ -185,19 +187,13 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
                     except:
                         day_obj[name] = None
             chartData.append(day_obj)
-        
         # --- CALCULAR MÉTRICAS ADICIONALES ---
-        # Identificar hotel principal (primero en la lista) y competidores
         hotel_principal = hotelNames[0] if hotelNames else None
         competidores = hotelNames[1:] if len(hotelNames) > 1 else []
-
-        # Inicializar listas para cada métrica
         promedio_competidores_row = {"Hotel Name": "Tarifa promedio de competidores", "URL": ""}
         disponibilidad_row = {"Hotel Name": "Disponibilidad de la oferta (%)", "URL": ""}
         diferencia_row = {"Hotel Name": "Diferencia de mi tarifa vs. la tarifa promedio de los competidores (%)", "URL": ""}
-
         for date in all_dates:
-            # Obtener precios válidos para esta fecha
             precios_validos = {}
             for hotel in result:
                 name = hotel["Hotel Name"]
@@ -207,36 +203,35 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
                         precios_validos[name] = float(price)
                     except:
                         continue
-
-            # 1. Calcular tarifa promedio de competidores (ignorando N/A y hotel principal)
             precios_competidores = []
             for name in competidores:
                 precio = precios_validos.get(name)
                 if precio is not None and isinstance(precio, (int, float)):
                     precios_competidores.append(precio)
-
             promedio_competidores = None
             if precios_competidores:
                 promedio_competidores = sum(precios_competidores) / len(precios_competidores)
-
-            # 2. Calcular disponibilidad de la oferta (%)
+            # Redondear a 2 decimales y usar coma como separador decimal
+            if promedio_competidores is not None:
+                promedio_competidores_str = f"{promedio_competidores:.2f}".replace('.', ',')
+            else:
+                promedio_competidores_str = ""
             total_hoteles = len(hotelNames)
             hoteles_con_precio = len([name for name in hotelNames if precios_validos.get(name) is not None])
             disponibilidad_porcentaje = round((hoteles_con_precio / total_hoteles) * 100) if total_hoteles > 0 else 0
-            disponibilidad = f"{disponibilidad_porcentaje}%"
-
-            # 3. Calcular diferencia porcentual del hotel principal vs promedio de competidores
+            # Mostrar como entero entre 0 y 100
+            disponibilidad = str(int(disponibilidad_porcentaje))
             diferencia_porcentual = None
             precio_principal = precios_validos.get(hotel_principal)
             if precio_principal is not None and promedio_competidores is not None and promedio_competidores > 0:
                 diferencia = ((precio_principal - promedio_competidores) / promedio_competidores) * 100
-                diferencia_porcentual = f"{diferencia:+.1f}%" if diferencia != 0 else "0.0%"
-
-            # Agregar métricas a las filas únicas
-            promedio_competidores_row[date] = str(promedio_competidores) if promedio_competidores is not None else ""
-            disponibilidad_row[date] = disponibilidad if disponibilidad is not None else ""
-            diferencia_row[date] = str(diferencia_porcentual) if diferencia_porcentual is not None else ""
-
+                # Mostrar como entero entre 0 y 100 (sin signo)
+                diferencia_porcentual = str(int(round(abs(diferencia))))
+            else:
+                diferencia_porcentual = ""
+            promedio_competidores_row[date] = promedio_competidores_str
+            disponibilidad_row[date] = disponibilidad
+            diferencia_row[date] = diferencia_porcentual
             # Agregar métricas al chartData (para frontend)
             chartData.append({
                 "date": date,
@@ -244,12 +239,9 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
                 "Disponibilidad de la oferta (%)": disponibilidad,
                 "Diferencia de mi tarifa vs. la tarifa promedio de los competidores (%)": diferencia_porcentual
             })
-
-        # Agregar métricas al DataFrame original (al final)
         result.append(promedio_competidores_row)
         result.append(disponibilidad_row)
         result.append(diferencia_row)
-
         # --- FORMATO DE NOMBRE DE ARCHIVO ---
         import re
         def limpiar_nombre(nombre):
@@ -269,10 +261,15 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
         base_filename = f"HotelRateShopper_{set_name_limpio}_{timestamp}"
         csv_filename = f"{base_filename}.csv"
         xlsx_filename = f"{base_filename}.xlsx"
-
         # Generar archivos CON las métricas incluidas
         df = pd.DataFrame(result)
-        df.to_csv(csv_filename, index=False)
+        # Ordenar columnas: Hotel Name, URL, fechas ordenadas
+        columnas_ordenadas = ["Hotel Name", "URL"] + all_dates
+        df = df[columnas_ordenadas]
+        # Convertir todos los valores flotantes a string con coma como separador decimal
+        for col in all_dates:
+            df[col] = pd.Series(df[col]).apply(lambda x: f"{x:.2f}".replace('.', ',') if isinstance(x, float) else x)
+        df.to_csv(csv_filename, index=False, encoding='utf-8', sep=';')
         df.to_excel(xlsx_filename, index=False)
         
         # Subir a GCS

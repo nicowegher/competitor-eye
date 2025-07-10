@@ -379,11 +379,15 @@ jobs_status = {}
 # Worker simple que procesa la cola
 def scraper_worker():
     global worker_running
+    logger.info("[WORKER] Worker de scraper iniciado y corriendo.")
     while True:
         job = None
         with job_queue_lock:
             if job_queue:
                 job = job_queue.popleft()
+                logger.info(f"[WORKER] Trabajo tomado de la cola: taskId={job['taskId']}, setId={job.get('setId')}, userId={job.get('userId')}")
+            else:
+                logger.info("[WORKER] Cola vacía, esperando trabajos...")
         if job:
             taskId = job['taskId']
             jobs_status[taskId] = {'status': 'running', 'startedAt': datetime.now().isoformat()}

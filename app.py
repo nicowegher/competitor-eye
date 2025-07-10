@@ -17,6 +17,7 @@ import logging
 from mailersend import emails
 from time import sleep
 import mercadopago
+import time
 
 # --- CONFIGURACIÓN DE LOGGING ---
 logging.basicConfig(level=logging.INFO)
@@ -361,60 +362,134 @@ def run_scraper_async(hotel_base_urls, days, taskId, userEmail=None, setName=Non
         doc_ref = db.collection("scraping_reports").document(taskId)
         doc_ref.update({
             "status": "failed",
-            "completedAt": datetime.now(),
+            "completedAt": datetime.utcnow(),
             "error": str(e)
         })
 
-# --- COLA DE TRABAJOS Y WORKER SIMPLE ---
-from collections import deque
-import time
-
-job_queue = deque()  # Cola de trabajos en memoria
-job_queue_lock = threading.Lock()
-worker_running = False
+# --- COLA DE TRABAJOS PERSISTENTE EN FIRESTORE ---
+# Cada trabajo es un documento en la colección 'scraper_jobs'
 
 # Estado de trabajos individuales (por taskId)
 jobs_status = {}
 
-# Worker simple que procesa la cola
+# --- ENDPOINT MEJORADO DE SCRAPER ---
+@app.route('/run-scraper', methods=['POST'])
+def run_scraper():
+    global scraper_status
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({"error": "Invalid JSON data"}), 400
+        taskId = data.get("taskId")
+        uid = data.get("userId")
+        days = data.get("daysToScrape", 2)
+        nights = data.get("nights", 1)
+        currency = data.get("currency", "USD")
+        set_id = data.get("setId") or data.get("taskId")
+        plan = get_user_plan(uid)
+        logger.info(f"Plan detectado para el usuario {uid}: {plan}")
+        limits = PLAN_LIMITS.get(plan, PLAN_LIMITS['free_trial'])
+        if days > limits['max_days']:
+            return jsonify({"error": f"Tu plan solo permite hasta {limits['max_days']} días de análisis.", "code": "LIMIT_DAYS"}), 403
+        if not taskId:
+            return jsonify({"error": "taskId is required"}), 400
+        hotel_base_urls = [data["ownHotelUrl"]] + data["competitorHotelUrls"]
+        userEmail = data.get("userEmail")
+        setName = data.get("setName")
+        # --- LIMITACIÓN: 1 investigación cada 15 minutos por set competitivo ---
+        quince_minutos_atras = datetime.utcnow() - timedelta(minutes=15)
+        query = db.collection("scraping_reports").where("setId", "==", set_id).where("startedAt", ">=", quince_minutos_atras)
+        docs = list(query.stream())
+        if docs:
+            return jsonify({
+                "status": "rate_limited",
+                "message": "Solo puedes enviar una investigación cada 15 minutos para este set competitivo."
+            }), 429
+        # --- ENCOLAR TRABAJO EN FIRESTORE ---
+        job_doc = {
+            'taskId': taskId,
+            'setId': set_id,
+            'userId': uid,
+            'hotel_base_urls': hotel_base_urls,
+            'days': days,
+            'nights': nights,
+            'currency': currency,
+            'userEmail': userEmail,
+            'setName': setName,
+            'status': 'queued',
+            'createdAt': datetime.utcnow(),
+            'enqueuedAt': datetime.utcnow().isoformat()
+        }
+        db.collection('scraper_jobs').document(taskId).set(job_doc)
+        jobs_status[taskId] = {'status': 'queued', 'enqueuedAt': job_doc['enqueuedAt']}
+        return jsonify({
+            "status": "queued",
+            "message": "Tu investigación fue encolada y se procesará en orden. Recibirás un email al finalizar.",
+            "taskId": taskId
+        })
+    except Exception as e:
+        logger.error(f"Error al encolar scraper: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# --- WORKER QUE PROCESA LA COLA PERSISTENTE (FIFO) ---
 def scraper_worker():
     global worker_running
     logger.info("[WORKER] Worker de scraper iniciado y corriendo.")
     while True:
-        job = None
-        with job_queue_lock:
-            if job_queue:
-                job = job_queue.popleft()
-                logger.info(f"[WORKER] Trabajo tomado de la cola: taskId={job['taskId']}, setId={job.get('setId')}, userId={job.get('userId')}")
+        try:
+            # Buscar el trabajo 'queued' más antiguo (FIFO)
+            jobs_ref = db.collection('scraper_jobs').where('status', '==', 'queued').order_by('createdAt').limit(1)
+            jobs = list(jobs_ref.stream())
+            if jobs:
+                job_doc = jobs[0]
+                job = job_doc.to_dict()
+                if job is not None:
+                    taskId = job['taskId']
+                    logger.info(f"[WORKER] Trabajo tomado de Firestore: taskId={taskId}, setId={job.get('setId')}, userId={job.get('userId')}")
+                    # Marcar como 'running'
+                    db.collection('scraper_jobs').document(taskId).update({
+                        'status': 'running',
+                        'startedAt': datetime.utcnow()
+                    })
+                    jobs_status[taskId] = {'status': 'running', 'startedAt': datetime.now().isoformat()}
+                    try:
+                        run_scraper_async(
+                            job['hotel_base_urls'],
+                            job['days'],
+                            job['taskId'],
+                            job.get('userEmail'),
+                            job.get('setName'),
+                            job.get('nights', 1),
+                            job.get('currency', 'USD')
+                        )
+                        # Marcar como 'completed'
+                        db.collection('scraper_jobs').document(taskId).update({
+                            'status': 'completed',
+                            'completedAt': datetime.utcnow()
+                        })
+                        jobs_status[taskId]['status'] = 'completed'
+                        jobs_status[taskId]['completedAt'] = datetime.now().isoformat()
+                    except Exception as e:
+                        db.collection('scraper_jobs').document(taskId).update({
+                            'status': 'failed',
+                            'completedAt': datetime.utcnow(),
+                            'error': str(e)
+                        })
+                        jobs_status[taskId]['status'] = 'failed'
+                        jobs_status[taskId]['error'] = str(e)
+                        jobs_status[taskId]['completedAt'] = datetime.now().isoformat()
             else:
-                logger.info("[WORKER] Cola vacía, esperando trabajos...")
-        if job:
-            taskId = job['taskId']
-            jobs_status[taskId] = {'status': 'running', 'startedAt': datetime.now().isoformat()}
-            try:
-                run_scraper_async(
-                    job['hotel_base_urls'],
-                    job['days'],
-                    job['taskId'],
-                    job.get('userEmail'),
-                    job.get('setName'),
-                    job.get('nights', 1),
-                    job.get('currency', 'USD')
-                )
-                jobs_status[taskId]['status'] = 'completed'
-                jobs_status[taskId]['completedAt'] = datetime.now().isoformat()
-            except Exception as e:
-                jobs_status[taskId]['status'] = 'failed'
-                jobs_status[taskId]['error'] = str(e)
-                jobs_status[taskId]['completedAt'] = datetime.now().isoformat()
-        else:
-            time.sleep(2)  # Esperar antes de revisar la cola de nuevo
+                logger.info("[WORKER] Cola Firestore vacía, esperando trabajos...")
+            time.sleep(2)
+        except Exception as e:
+            logger.error(f"[WORKER] Error en el worker de la cola persistente: {e}")
+            time.sleep(5)
 
 # Lanzar el worker en background al iniciar la app
-if not worker_running:
-    worker_thread = threading.Thread(target=scraper_worker, daemon=True)
-    worker_thread.start()
-    worker_running = True
+worker_running = False
+worker_thread = threading.Thread(target=scraper_worker, daemon=True)
+worker_thread.start()
+worker_running = True
 
 # --- ENDPOINT HEALTH CHECK ---
 @app.route('/', methods=['GET'])
@@ -465,65 +540,6 @@ def descargar_excel():
         )
     except Exception as e:
         return {"error": str(e)}, 500
-
-# --- ENDPOINT MEJORADO DE SCRAPER ---
-@app.route('/run-scraper', methods=['POST'])
-def run_scraper():
-    global scraper_status
-    try:
-        data = request.get_json()
-        if data is None:
-            return jsonify({"error": "Invalid JSON data"}), 400
-        taskId = data.get("taskId")
-        uid = data.get("userId")
-        days = data.get("daysToScrape", 2)
-        nights = data.get("nights", 1)
-        currency = data.get("currency", "USD")
-        set_id = data.get("setId") or data.get("taskId")  # Usar setId si está, sino taskId
-        plan = get_user_plan(uid)
-        logger.info(f"Plan detectado para el usuario {uid}: {plan}")
-        limits = PLAN_LIMITS.get(plan, PLAN_LIMITS['free_trial'])
-        if days > limits['max_days']:
-            return jsonify({"error": f"Tu plan solo permite hasta {limits['max_days']} días de análisis.", "code": "LIMIT_DAYS"}), 403
-        if not taskId:
-            return jsonify({"error": "taskId is required"}), 400
-        hotel_base_urls = [data["ownHotelUrl"]] + data["competitorHotelUrls"]
-        userEmail = data.get("userEmail")
-        setName = data.get("setName")
-        # --- LIMITACIÓN: 1 investigación cada 30 minutos por set competitivo ---
-        media_hora_atras = datetime.utcnow() - timedelta(minutes=30)
-        # Buscar reportes de este set en los últimos 30 minutos
-        query = db.collection("scraping_reports").where("setId", "==", set_id).where("startedAt", ">=", media_hora_atras)
-        docs = list(query.stream())
-        if docs:
-            return jsonify({
-                "status": "rate_limited",
-                "message": "Solo puedes enviar una investigación cada 30 minutos para este set competitivo."
-            }), 429
-        # Encolar el trabajo
-        job = {
-            'taskId': taskId,
-            'setId': set_id,
-            'userId': uid,
-            'hotel_base_urls': hotel_base_urls,
-            'days': days,
-            'nights': nights,
-            'currency': currency,
-            'userEmail': userEmail,
-            'setName': setName,
-            'enqueuedAt': datetime.now().isoformat()
-        }
-        with job_queue_lock:
-            job_queue.append(job)
-        jobs_status[taskId] = {'status': 'queued', 'enqueuedAt': job['enqueuedAt']}
-        return jsonify({
-            "status": "queued",
-            "message": "Tu investigación fue encolada y se procesará en orden. Recibirás un email al finalizar.",
-            "taskId": taskId
-        })
-    except Exception as e:
-        logger.error(f"Error al encolar scraper: {str(e)}")
-        return jsonify({"error": str(e)}), 500
 
 # --- ENDPOINT PARA VERIFICAR ESTADO DEL SCRAPER ---
 @app.route('/scraper-status', methods=['GET'])

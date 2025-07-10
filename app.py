@@ -418,7 +418,12 @@ def run_scraper():
             'createdAt': datetime.utcnow(),
             'enqueuedAt': datetime.utcnow().isoformat()
         }
-        db.collection('scraper_jobs').document(taskId).set(job_doc)
+        try:
+            db.collection('scraper_jobs').document(taskId).set(job_doc)
+            logger.info(f"[run-scraper] Trabajo encolado en Firestore: taskId={taskId}")
+        except Exception as e:
+            logger.error(f"[run-scraper] Error al encolar trabajo en Firestore: {e}")
+            return jsonify({"error": "No se pudo encolar el trabajo en Firestore", "detalle": str(e)}), 500
         jobs_status[taskId] = {'status': 'queued', 'enqueuedAt': job_doc['enqueuedAt']}
         return jsonify({
             "status": "queued",

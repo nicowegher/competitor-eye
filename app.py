@@ -379,12 +379,13 @@ def run_scraper():
             return jsonify({"error": "Invalid JSON data"}), 400
         taskId = data.get("taskId")
         uid = data.get("userId")
+        logger.info(f"[run-scraper] Recibido UID: {uid}")
+        plan = get_user_plan(uid)
+        logger.info(f"[run-scraper] Plan detectado para UID {uid}: {plan}")
         days = data.get("daysToScrape", 2)
         nights = data.get("nights", 1)
         currency = data.get("currency", "USD")
         set_id = data.get("setId") or data.get("taskId")
-        plan = get_user_plan(uid)
-        logger.info(f"Plan detectado para el usuario {uid}: {plan}")
         limits = PLAN_LIMITS.get(plan, PLAN_LIMITS['free_trial'])
         if days > limits['max_days']:
             return jsonify({"error": f"Tu plan solo permite hasta {limits['max_days']} días de análisis.", "code": "LIMIT_DAYS"}), 403

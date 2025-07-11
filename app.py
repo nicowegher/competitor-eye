@@ -857,23 +857,18 @@ def test_metricas():
                         precios_validos[name] = float(price)
                     except:
                         pass
-            
             # Calcular promedio de competidores
             if competidores and hotel_principal:
                 precios_competidores = [precios_validos.get(comp, 0) for comp in competidores if precios_validos.get(comp, 0) > 0]
-            if precios_competidores:
+                if precios_competidores:
                     promedio = sum(precios_competidores) / len(precios_competidores)
                     promedio_competidores_row[date] = str(round(promedio, 2))
                 else:
                     promedio_competidores_row[date] = "N/A"
-                
-                # Calcular disponibilidad
                 if hotel_principal in precios_validos:
                     disponibilidad_row[date] = "100"
                 else:
                     disponibilidad_row[date] = "0"
-                
-                # Calcular diferencia
                 if hotel_principal in precios_validos and promedio_competidores_row[date] not in ("N/A", None):
                     mi_precio = precios_validos[hotel_principal]
                     diff_percent = ((mi_precio - float(promedio_competidores_row[date])) / float(promedio_competidores_row[date])) * 100

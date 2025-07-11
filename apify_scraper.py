@@ -36,13 +36,13 @@ def fetch_price_for_night(client, base_url, hotel_name, checkin, checkout, curre
         run = client.actor("voyager/booking-scraper").call(run_input=run_input)
         if run is None or "defaultDatasetId" not in run:
             logger.warning(f"No se pudo obtener dataset para {hotel_name} - {checkin}")
-            return (hotel_name, base_url, checkin, "N/A")
+            return (hotel_name, base_url, checkin, None)
         dataset_id = run["defaultDatasetId"]
         items = client.dataset(dataset_id).list_items().items
         if not items:
             logger.warning(f"No se encontraron items para {hotel_name} - {checkin}")
-            return (hotel_name, base_url, checkin, "N/A")
-        price = "N/A"
+            return (hotel_name, base_url, checkin, None)
+        price = None
         for item in items:
             if "rooms" in item and item["rooms"]:
                 for room in item["rooms"]:
@@ -58,7 +58,7 @@ def fetch_price_for_night(client, base_url, hotel_name, checkin, checkout, curre
         return (hotel_name, base_url, checkin, price)
     except Exception as e:
         logger.error(f"Error para {hotel_name} {checkin}: {e}")
-        return (hotel_name, base_url, checkin, "N/A")
+        return (hotel_name, base_url, checkin, None)
 
 def scrape_booking_data(hotel_base_urls, days=2, nights=1, currency="USD"):
     """
@@ -107,7 +107,7 @@ def scrape_booking_data(hotel_base_urls, days=2, nights=1, currency="USD"):
                 logger.info(f"Progreso: {completed}/{len(tasks)} - {hotel_name} - {checkin}")
             except Exception as exc:
                 logger.error(f"Error en {hotel_name} {checkin}: {exc}")
-                results.append((hotel_name, base_url, checkin, "N/A"))
+                results.append((hotel_name, base_url, checkin, None))
             time.sleep(0.5)
     # Construir DataFrame
     df_dict = {}

@@ -39,7 +39,7 @@ def calcular_metricas(datos_prueba):
         for hotel in datos_prueba:
             name = hotel["Hotel Name"]
             price = hotel.get(date, None)
-            if price and price != "N/A":
+            if price is not None:
                 try:
                     precios_validos[name] = float(price)
                 except:
@@ -151,13 +151,13 @@ def test_metricas():
             "URL": "https://example.com/hotel2",
             "2024-01-15": 140.0,
             "2024-01-16": 150.0,
-            "2024-01-17": "N/A"
+            "2024-01-17": None
         },
         {
             "Hotel Name": "Competidor 2",
             "URL": "https://example.com/hotel3",
             "2024-01-15": 145.0,
-            "2024-01-16": "N/A",
+            "2024-01-16": None,
             "2024-01-17": 150.0
         }
     ]

@@ -18,7 +18,6 @@ from mailersend import emails
 from time import sleep
 import mercadopago
 import time
-from firebase_admin import firestore as firebase_firestore
 
 # --- CONFIGURACIÓN DE LOGGING ---
 logging.basicConfig(level=logging.INFO)
@@ -107,8 +106,10 @@ def get_user_plan(uid):
     try:
         user_ref = db.collection('users').document(uid)
         user_doc = user_ref.get()
-        if user_doc and user_doc.exists:
-            return user_doc.to_dict().get('plan', 'free_trial')
+        if user_doc is not None and hasattr(user_doc, 'exists') and user_doc.exists:
+            user_dict = user_doc.to_dict() if hasattr(user_doc, 'to_dict') else None
+            if user_dict is not None:
+                return user_dict.get('plan', 'free_trial')
         return 'free_trial'
     except Exception as e:
         logger.error(f"Error obteniendo plan del usuario {uid}: {e}")
@@ -148,7 +149,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             for hotel in result:
                 name = hotel["Hotel Name"]
                 price = hotel.get(date, None)
-                if price in ("N/A", None):
+                if price is None:
                     day_obj[name] = None  # Celda vacía
                 else:
                     try:
@@ -166,7 +167,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             for hotel in result:
                 name = hotel["Hotel Name"]
                 price = hotel.get(date, None)
-                if price not in (None, "N/A"):
+                if price is not None:
                     try:
                         precios_validos[name] = float(price)
                     except:
@@ -177,7 +178,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                     promedio = sum(precios_competidores) / len(precios_competidores)
                     promedio_competidores_row[date] = str(round(promedio, 2))
                 else:
-                    promedio_competidores_row[date] = None
+                    promedio_competidores_row[date] = ''
                 if hotel_principal in precios_validos:
                     disponibilidad_row[date] = "100"
                 else:
@@ -187,11 +188,11 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                     diff_percent = ((mi_precio - float(promedio_competidores_row[date])) / float(promedio_competidores_row[date])) * 100
                     diferencia_row[date] = str(round(diff_percent, 0))
                 else:
-                    diferencia_row[date] = None
+                    diferencia_row[date] = ''
             else:
-                promedio_competidores_row[date] = None
-                disponibilidad_row[date] = None
-                diferencia_row[date] = None
+                promedio_competidores_row[date] = ''
+                disponibilidad_row[date] = ''
+                diferencia_row[date] = ''
         result.append(promedio_competidores_row)
         result.append(disponibilidad_row)
         result.append(diferencia_row)
@@ -215,15 +216,15 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         logger.info(f"Archivo CSV generado y subido: {csv_blob_name}")
         df_excel = pd.DataFrame(result)
         df_excel = df_excel.reindex(columns=column_order)
-        excel_buffer = io.BytesIO()
-        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        with pd.ExcelWriter('temp_excel_upload.xlsx', engine='openpyxl') as writer:
             df_excel.to_excel(writer, sheet_name='Tarifas', index=False)
-        excel_buffer.seek(0)
-        excel_blob = bucket.blob(excel_blob_name)
-        excel_blob.upload_from_file(excel_buffer, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        with open('temp_excel_upload.xlsx', 'rb') as f:
+            excel_blob = bucket.blob(excel_blob_name)
+            excel_blob.upload_from_file(f, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        os.remove('temp_excel_upload.xlsx')
         logger.info(f"Archivo Excel generado y subido: {excel_blob_name}")
         # --- GUARDAR EN FIRESTORE ---
-        now = firebase_firestore.SERVER_TIMESTAMP
+        now = firestore.SERVER_TIMESTAMP
         report_data = {
             "status": "completed",
             "csvFileUrl": f"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{csv_blob_name}",
@@ -280,7 +281,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         logger.error(f"Error en scraper: {e}")
         # Actualizar el documento con status failed y completedAt
         try:
-            now = firebase_firestore.SERVER_TIMESTAMP
+            now = firestore.SERVER_TIMESTAMP
             db.collection("scraping_reports").document(report_id).update({
                 "status": "failed",
                 "completedAt": now
@@ -384,7 +385,7 @@ def descargar_csv():
         if not report.exists:
             return jsonify({"error": "Reporte no encontrado"}), 404
         
-        report_data = report.to_dict()
+        report_data = report.to_dict() or {}
         result = report_data.get('result', [])
         
         # Crear CSV
@@ -419,18 +420,18 @@ def descargar_excel():
         if not report.exists:
             return jsonify({"error": "Reporte no encontrado"}), 404
         
-        report_data = report.to_dict()
+        report_data = report.to_dict() or {}
         result = report_data.get('result', [])
         
         # Crear Excel
         df = pd.DataFrame(result)
-        excel_buffer = io.BytesIO()
-        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        with pd.ExcelWriter('temp_excel_download.xlsx', engine='openpyxl') as writer:
             df.to_excel(writer, sheet_name='Tarifas', index=False)
-        excel_buffer.seek(0)
-        
+        with open('temp_excel_download.xlsx', 'rb') as f:
+            excel_bytes = f.read()
+        os.remove('temp_excel_download.xlsx')
         return send_file(
-            excel_buffer,
+            io.BytesIO(excel_bytes),
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
             download_name=f"tarifas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
@@ -868,7 +869,7 @@ def test_metricas():
             for hotel in result:
                 name = hotel["Hotel Name"]
                 price = hotel.get(date, None)
-                if price not in (None, "N/A"):
+                if price is not None:
                     try:
                         precios_validos[name] = float(price)
                     except:
@@ -880,7 +881,7 @@ def test_metricas():
                     promedio = sum(precios_competidores) / len(precios_competidores)
                     promedio_competidores_row[date] = str(round(promedio, 2))
                 else:
-                    promedio_competidores_row[date] = None
+                    promedio_competidores_row[date] = ''
                 if hotel_principal in precios_validos:
                     disponibilidad_row[date] = "100"
                 else:
@@ -890,11 +891,11 @@ def test_metricas():
                     diff_percent = ((mi_precio - float(promedio_competidores_row[date])) / float(promedio_competidores_row[date])) * 100
                     diferencia_row[date] = str(round(diff_percent, 0))
                 else:
-                    diferencia_row[date] = None
+                    diferencia_row[date] = ''
             else:
-                promedio_competidores_row[date] = None
-                disponibilidad_row[date] = None
-                diferencia_row[date] = None
+                promedio_competidores_row[date] = ''
+                disponibilidad_row[date] = ''
+                diferencia_row[date] = ''
         
         result.append(promedio_competidores_row)
         result.append(disponibilidad_row)

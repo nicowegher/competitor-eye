@@ -131,10 +131,7 @@ Los archivos Excel y CSV contendrán las siguientes columnas:
 
 *   **Hotel Name**: Nombre del hotel.
 *   **URL**: URL del hotel en Booking.com.
-*   **YYYY-MM-DD**: Columnas para cada uno de los próximos 60 días, mostrando la tarifa más baja encontrada para ese día. Si no se encuentra una tarifa, se mostrará 
-
-
-"N/A".
+*   **YYYY-MM-DD**: Columnas para cada uno de los próximos 60 días, mostrando la tarifa más baja encontrada para ese día. Si no se encuentra una tarifa, se mostrará una celda vacía.
 
 ## Solución de Problemas Comunes
 

@@ -212,6 +212,8 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         df_csv.to_csv(csv_buffer, index=False, decimal=',')
         csv_buffer.seek(0)
         csv_blob = bucket.blob(csv_blob_name)
+        # Añadir metadatos personalizados con userId para las reglas de seguridad
+        csv_blob.metadata = {'userId': userId}
         csv_blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
         logger.info(f"Archivo CSV generado y subido: {csv_blob_name}")
         df_excel = pd.DataFrame(result)
@@ -220,6 +222,8 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             df_excel.to_excel(writer, sheet_name='Tarifas', index=False)
         with open('temp_excel_upload.xlsx', 'rb') as f:
             excel_blob = bucket.blob(excel_blob_name)
+            # Añadir metadatos personalizados con userId para las reglas de seguridad
+            excel_blob.metadata = {'userId': userId}
             excel_blob.upload_from_file(f, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         os.remove('temp_excel_upload.xlsx')
         logger.info(f"Archivo Excel generado y subido: {excel_blob_name}")

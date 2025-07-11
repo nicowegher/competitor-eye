@@ -141,13 +141,14 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         # Ordenar fechas cronológicamente de menor a mayor
         from datetime import datetime as dt
         all_dates = sorted(all_dates, key=lambda x: dt.strptime(x, "%Y-%m-%d"))
+        column_order = ["Hotel Name", "URL"] + all_dates
         chartData = []
         for date in all_dates:
             day_obj = {"date": date}
             for hotel in result:
                 name = hotel["Hotel Name"]
                 price = hotel.get(date, None)
-                if price == "N/A" or price is None:
+                if price in ("N/A", None):
                     day_obj[name] = None  # Celda vacía
                 else:
                     try:
@@ -165,7 +166,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             for hotel in result:
                 name = hotel["Hotel Name"]
                 price = hotel.get(date, None)
-                if price and price != "N/A":
+                if price not in (None, "N/A"):
                     try:
                         precios_validos[name] = float(price)
                     except:
@@ -194,25 +195,26 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         result.append(promedio_competidores_row)
         result.append(disponibilidad_row)
         result.append(diferencia_row)
+        # --- GENERAR ARCHIVOS ---
         def limpiar_nombre(nombre):
             import re
             return re.sub(r'[<>:"/\\|?*]', '', nombre)
         set_name_clean = limpiar_nombre(setName) if setName else "scraping"
-        # Usar report_id para los nombres de archivo
         if not report_id:
             report_id = f"{set_name_clean}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         csv_blob_name = f"reports/{report_id}.csv"
         excel_blob_name = f"reports/{report_id}.xlsx"
-        # Generar CSV
+        # Crear DataFrame y forzar orden de columnas
         df_csv = pd.DataFrame(result)
+        df_csv = df_csv.reindex(columns=column_order)
         csv_buffer = io.StringIO()
         df_csv.to_csv(csv_buffer, index=False, decimal=',')
         csv_buffer.seek(0)
         csv_blob = bucket.blob(csv_blob_name)
         csv_blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
         logger.info(f"Archivo CSV generado y subido: {csv_blob_name}")
-        # Generar Excel
         df_excel = pd.DataFrame(result)
+        df_excel = df_excel.reindex(columns=column_order)
         excel_buffer = io.BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
             df_excel.to_excel(writer, sheet_name='Tarifas', index=False)
@@ -304,8 +306,9 @@ def run_scraper():
         setName = data.get('setName', 'Mi Set')
         userEmail = data.get('userEmail')
         report_id = data.get('report_id')
+        setId = data.get('setId')  # <-- Tomar el setId del payload
         
-        logger.info(f"[run-scraper] Recibido UID: {uid}, report_id: {report_id}")
+        logger.info(f"[run-scraper] Recibido UID: {uid}, report_id: {report_id}, setId: {setId}")
         
         # Verificar si ya hay un scraper corriendo
         if scraper_status["is_running"]:
@@ -334,7 +337,7 @@ def run_scraper():
         scraper_status["current_user"] = uid
         thread = threading.Thread(
             target=run_scraper_async,
-            args=(hotel_base_urls, days, userEmail, setName, nights, currency, report_id, uid, report_id) # Pasar userId y setId
+            args=(hotel_base_urls, days, userEmail, setName, nights, currency, report_id, uid, setId) # Pasar userId y setId
         )
         thread.daemon = True
         thread.start()
@@ -865,7 +868,7 @@ def test_metricas():
             for hotel in result:
                 name = hotel["Hotel Name"]
                 price = hotel.get(date, None)
-                if price and price != "N/A":
+                if price not in (None, "N/A"):
                     try:
                         precios_validos[name] = float(price)
                     except:

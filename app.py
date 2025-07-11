@@ -114,7 +114,7 @@ def get_user_plan(uid):
         return 'free_trial'
 
 # --- FUNCIÓN ASÍNCRONA PARA EL SCRAPER (SIMPLE) ---
-def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, nights=1, currency="USD"):
+def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, nights=1, currency="USD", report_id=None):
     global scraper_status
     try:
         logger.info("Iniciando scraper asíncrono")
@@ -124,7 +124,6 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         
         from apify_scraper import scrape_booking_data
         
-        # Ejecutar scraper
         logger.info(f"Ejecutando scraper para {len(hotel_base_urls)} hoteles por {days} días, {nights} noches, moneda {currency}")
         result = scrape_booking_data(hotel_base_urls, days, nights, currency)
         
@@ -132,25 +131,20 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             raise Exception("No se obtuvieron datos del scraper")
         
         # --- ENRIQUECER DATOS PARA GRÁFICOS ---
-        # 1. Extraer nombres de hoteles en orden
         hotelNames = [hotel["Hotel Name"] for hotel in result]
-        # 2. Extraer todas las fechas únicas y ordenarlas cronológicamente
         all_dates = set()
         for hotel in result:
             for k in hotel.keys():
                 if k not in ("Hotel Name", "URL"):
                     all_dates.add(k)
-        # Ordenar fechas cronológicamente
         from datetime import datetime as dt
         all_dates = sorted(all_dates, key=lambda x: dt.strptime(x, "%Y-%m-%d"))
-        # 3. Construir chartData
         chartData = []
         for date in all_dates:
             day_obj = {"date": date}
             for hotel in result:
                 name = hotel["Hotel Name"]
                 price = hotel.get(date, None)
-                # Convertir "N/A" a None/null, y string numérico a float
                 if price == "N/A":
                     day_obj[name] = None
                 elif price is None:
@@ -161,14 +155,11 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                     except:
                         day_obj[name] = None
             chartData.append(day_obj)
-        
-        # --- CALCULAR MÉTRICAS ADICIONALES ---
         hotel_principal = hotelNames[0] if hotelNames else None
         competidores = hotelNames[1:] if len(hotelNames) > 1 else []
         promedio_competidores_row = {"Hotel Name": "Tarifa promedio de competidores", "URL": ""}
         disponibilidad_row = {"Hotel Name": "Disponibilidad de la oferta (%)", "URL": ""}
         diferencia_row = {"Hotel Name": "Diferencia de mi tarifa vs. la tarifa promedio de los competidores (%)", "URL": ""}
-        
         for date in all_dates:
             precios_validos = {}
             for hotel in result:
@@ -179,67 +170,56 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                         precios_validos[name] = float(price)
                     except:
                         pass
-            
-            # Calcular promedio de competidores
             if competidores and hotel_principal:
                 precios_competidores = [precios_validos.get(comp, 0) for comp in competidores if precios_validos.get(comp, 0) > 0]
                 if precios_competidores:
                     promedio = sum(precios_competidores) / len(precios_competidores)
-                    promedio_competidores_row[date] = round(promedio, 2)
+                    promedio_competidores_row[date] = str(round(promedio, 2))
                 else:
-                    promedio_competidores_row[date] = None
-                
-                # Calcular disponibilidad
+                    promedio_competidores_row[date] = "N/A"
                 if hotel_principal in precios_validos:
-                    disponibilidad_row[date] = 100  # Si hay precio, está disponible
+                    disponibilidad_row[date] = "100"
                 else:
-                    disponibilidad_row[date] = 0
-                
-                # Calcular diferencia
-                if hotel_principal in precios_validos and promedio_competidores_row[date]:
+                    disponibilidad_row[date] = "0"
+                if hotel_principal in precios_validos and promedio_competidores_row[date] not in ("N/A", None):
                     mi_precio = precios_validos[hotel_principal]
-                    diff_percent = ((mi_precio - promedio_competidores_row[date]) / promedio_competidores_row[date]) * 100
-                    diferencia_row[date] = round(diff_percent, 0)
+                    diff_percent = ((mi_precio - float(promedio_competidores_row[date])) / float(promedio_competidores_row[date])) * 100
+                    diferencia_row[date] = str(round(diff_percent, 0))
                 else:
-                    diferencia_row[date] = None
+                    diferencia_row[date] = "N/A"
             else:
-                promedio_competidores_row[date] = None
-                disponibilidad_row[date] = None
-                diferencia_row[date] = None
-        
-        # Agregar filas de métricas al resultado
+                promedio_competidores_row[date] = "N/A"
+                disponibilidad_row[date] = "N/A"
+                diferencia_row[date] = "N/A"
         result.append(promedio_competidores_row)
         result.append(disponibilidad_row)
         result.append(diferencia_row)
-        
-        # --- GENERAR ARCHIVOS ---
         def limpiar_nombre(nombre):
-            # Remover caracteres especiales para nombres de archivo
             import re
             return re.sub(r'[<>:"/\\|?*]', '', nombre)
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         set_name_clean = limpiar_nombre(setName) if setName else "scraping"
-        
+        # Usar report_id para los nombres de archivo
+        if not report_id:
+            report_id = f"{set_name_clean}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        csv_blob_name = f"reports/{report_id}.csv"
+        excel_blob_name = f"reports/{report_id}.xlsx"
         # Generar CSV
         df_csv = pd.DataFrame(result)
         csv_buffer = io.StringIO()
         df_csv.to_csv(csv_buffer, index=False, decimal=',')
         csv_buffer.seek(0)
-        csv_blob_name = f"reports/{set_name_clean}_{timestamp}.csv"
         csv_blob = bucket.blob(csv_blob_name)
         csv_blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
-        
+        logger.info(f"Archivo CSV generado y subido: {csv_blob_name}")
         # Generar Excel
         df_excel = pd.DataFrame(result)
         excel_buffer = io.BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
             df_excel.to_excel(writer, sheet_name='Tarifas', index=False)
         excel_buffer.seek(0)
-        excel_blob_name = f"reports/{set_name_clean}_{timestamp}.xlsx"
         excel_blob = bucket.blob(excel_blob_name)
         excel_blob.upload_from_file(excel_buffer, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        
+        logger.info(f"Archivo Excel generado y subido: {excel_blob_name}")
         # --- GUARDAR EN FIRESTORE ---
         report_data = {
             "setName": setName,
@@ -254,16 +234,42 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             "nights": nights,
             "currency": currency
         }
-        
-        db.collection("scraping_reports").add(report_data)
-        
+        db.collection("scraping_reports").document(report_id).set(report_data)
+        logger.info(f"Reporte guardado en Firestore con ID: {report_id}")
+        # --- ENVIAR CORREO AL USUARIO ---
+        try:
+            if userEmail:
+                mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
+                mail_body = {
+                    "from": {
+                        "email": "noreply@competitoreye.com",
+                        "name": "Competitor Eye"
+                    },
+                    "to": [
+                        {
+                            "email": userEmail,
+                            "name": "Usuario"
+                        }
+                    ],
+                    "subject": f"Tu reporte de tarifas está listo: {setName}",
+                    "html": f"""
+                    <h2>¡Tu reporte está listo!</h2>
+                    <p>Puedes descargar los archivos aquí:</p>
+                    <ul>
+                        <li><a href='https://storage.googleapis.com/{GCS_BUCKET_NAME}/{csv_blob_name}'>Descargar CSV</a></li>
+                        <li><a href='https://storage.googleapis.com/{GCS_BUCKET_NAME}/{excel_blob_name}'>Descargar Excel</a></li>
+                    </ul>
+                    """
+                }
+                mailer.send(mail_body)
+                logger.info(f"Correo enviado a {userEmail}")
+        except Exception as e:
+            logger.error(f"Error enviando correo: {e}")
         # Actualizar estado
         scraper_status["result"] = report_data
         scraper_status["progress"] = 100
         scraper_status["is_running"] = False
-        
         logger.info("Scraper completado exitosamente")
-        
     except Exception as e:
         logger.error(f"Error en scraper: {e}")
         scraper_status["error"] = str(e)
@@ -284,8 +290,9 @@ def run_scraper():
         currency = data.get('currency', 'USD')
         setName = data.get('setName', 'Mi Set')
         userEmail = data.get('userEmail')
+        report_id = data.get('report_id')
         
-        logger.info(f"[run-scraper] Recibido UID: {uid}")
+        logger.info(f"[run-scraper] Recibido UID: {uid}, report_id: {report_id}")
         
         # Verificar si ya hay un scraper corriendo
         if scraper_status["is_running"]:
@@ -314,7 +321,7 @@ def run_scraper():
         scraper_status["current_user"] = uid
         thread = threading.Thread(
             target=run_scraper_async,
-            args=(hotel_base_urls, days, userEmail, setName, nights, currency)
+            args=(hotel_base_urls, days, userEmail, setName, nights, currency, report_id)
         )
         thread.daemon = True
         thread.start()
@@ -373,7 +380,7 @@ def descargar_csv():
         return send_file(
             io.BytesIO(csv_buffer.getvalue().encode('utf-8')),
             mimetype='text/csv',
-            as_attachment=True,
+                        as_attachment=True, 
             download_name=f"tarifas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         )
         
@@ -460,12 +467,12 @@ def execute_scheduled_tasks():
                 # Ejecutar scraper para este grupo
                 hotel_urls = [grupo_data.get('hotel_principal')] + grupo_data.get('competidores', [])
                 
-                thread = threading.Thread(
-                    target=run_scraper_async,
+        thread = threading.Thread(
+            target=run_scraper_async,
                     args=(hotel_urls, grupo_data.get('days', 7), grupo_data.get('userEmail'), grupo_data.get('name'))
-                )
-                thread.daemon = True
-                thread.start()
+        )
+        thread.daemon = True
+        thread.start()
         
         return jsonify({"success": True, "message": "Tareas programadas ejecutadas"})
         
@@ -475,17 +482,17 @@ def execute_scheduled_tasks():
 @app.route('/init-user', methods=['POST'])
 def init_user():
     try:
-        data = request.get_json()
-        uid = data.get('uid')
-        email = data.get('email')
+    data = request.get_json()
+    uid = data.get('uid')
+    email = data.get('email')
         plan = data.get('plan', 'free_trial')
         
-        if not uid or not email:
+    if not uid or not email:
             return jsonify({"error": "UID y email requeridos"}), 400
-        
+
         # Crear o actualizar usuario
-        user_ref = db.collection('users').document(uid)
-        user_ref.set({
+    user_ref = db.collection('users').document(uid)
+    user_ref.set({
             'email': email,
             'plan': plan,
             'created_at': datetime.now()
@@ -499,8 +506,8 @@ def init_user():
 @app.route('/crear-grupo', methods=['POST'])
 def crear_grupo():
     try:
-        data = request.get_json()
-        uid = data.get('uid')
+    data = request.get_json()
+    uid = data.get('uid')
         nombre = data.get('nombre')
         hotel_principal = data.get('hotel_principal')
         
@@ -511,7 +518,7 @@ def crear_grupo():
         user_plan = get_user_plan(uid)
         plan_limits = PLAN_LIMITS.get(user_plan, PLAN_LIMITS["free_trial"])
         
-        # Contar grupos existentes
+    # Contar grupos existentes
         grupos_ref = db.collection('users').document(uid).collection('grupos')
         grupos_existentes = len(list(grupos_ref.stream()))
         
@@ -539,8 +546,8 @@ def crear_grupo():
 @app.route('/agregar-competidor', methods=['POST'])
 def agregar_competidor():
     try:
-        data = request.get_json()
-        uid = data.get('uid')
+    data = request.get_json()
+    uid = data.get('uid')
         grupo_id = data.get('grupo_id')
         competidor_url = data.get('competidor_url')
         
@@ -582,8 +589,8 @@ def agregar_competidor():
 @app.route('/configurar-dias', methods=['POST'])
 def configurar_dias():
     try:
-        data = request.get_json()
-        uid = data.get('uid')
+    data = request.get_json()
+    uid = data.get('uid')
         grupo_id = data.get('grupo_id')
         dias = data.get('dias')
         
@@ -613,8 +620,8 @@ def configurar_dias():
 @app.route('/configurar-schedule', methods=['POST'])
 def configurar_schedule():
     try:
-        data = request.get_json()
-        uid = data.get('uid')
+    data = request.get_json()
+    uid = data.get('uid')
         grupo_id = data.get('grupo_id')
         enabled = data.get('enabled', False)
         
@@ -644,7 +651,7 @@ def configurar_schedule():
 @app.route('/create-subscription-checkout', methods=['POST'])
 def create_subscription_checkout():
     try:
-        data = request.get_json()
+    data = request.get_json()
         plan = data.get('plan')
         user_email = data.get('user_email')
         
@@ -677,7 +684,7 @@ def create_subscription_checkout():
             "auto_return": "approved",
             "external_reference": f"plan_{plan}_{user_email}",
             "notification_url": "https://tu-backend.com/mercado-pago-webhook"
-        }
+    }
         
         preference = mp.preference().create(preference_data)
         
@@ -729,7 +736,7 @@ def mercado_pago_webhook():
                                 
                                 for user in users:
                                     user_ref = db.collection('users').document(user.id)
-                                    user_ref.update({
+                    user_ref.update({
                                         'plan': plan,
                                         'plan_updated_at': datetime.now()
                                     })
@@ -764,7 +771,7 @@ def mercado_pago_webhook():
                                         logger.error(f"Error enviando email: {e}")
                                     
                                     break
-                    
+                
                     elif payment_data["status"] == "rejected":
                         # Pago rechazado - enviar email de notificación
                         external_reference = payment_data.get("external_reference", "")
@@ -894,29 +901,29 @@ def test_metricas():
             # Calcular promedio de competidores
             if competidores and hotel_principal:
                 precios_competidores = [precios_validos.get(comp, 0) for comp in competidores if precios_validos.get(comp, 0) > 0]
-                if precios_competidores:
+            if precios_competidores:
                     promedio = sum(precios_competidores) / len(precios_competidores)
-                    promedio_competidores_row[date] = round(promedio, 2)
+                    promedio_competidores_row[date] = str(round(promedio, 2))
                 else:
-                    promedio_competidores_row[date] = None
+                    promedio_competidores_row[date] = "N/A"
                 
                 # Calcular disponibilidad
                 if hotel_principal in precios_validos:
-                    disponibilidad_row[date] = 100
+                    disponibilidad_row[date] = "100"
                 else:
-                    disponibilidad_row[date] = 0
+                    disponibilidad_row[date] = "0"
                 
                 # Calcular diferencia
-                if hotel_principal in precios_validos and promedio_competidores_row[date]:
+                if hotel_principal in precios_validos and promedio_competidores_row[date] not in ("N/A", None):
                     mi_precio = precios_validos[hotel_principal]
-                    diff_percent = ((mi_precio - promedio_competidores_row[date]) / promedio_competidores_row[date]) * 100
-                    diferencia_row[date] = round(diff_percent, 0)
+                    diff_percent = ((mi_precio - float(promedio_competidores_row[date])) / float(promedio_competidores_row[date])) * 100
+                    diferencia_row[date] = str(round(diff_percent, 0))
                 else:
-                    diferencia_row[date] = None
+                    diferencia_row[date] = "N/A"
             else:
-                promedio_competidores_row[date] = None
-                disponibilidad_row[date] = None
-                diferencia_row[date] = None
+                promedio_competidores_row[date] = "N/A"
+                disponibilidad_row[date] = "N/A"
+                diferencia_row[date] = "N/A"
         
         result.append(promedio_competidores_row)
         result.append(disponibilidad_row)

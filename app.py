@@ -502,27 +502,22 @@ def init_user():
 @app.route('/crear-grupo', methods=['POST'])
 def crear_grupo():
     try:
-    data = request.get_json()
-    uid = data.get('uid')
+        data = request.get_json()
+        uid = data.get('uid')
         nombre = data.get('nombre')
         hotel_principal = data.get('hotel_principal')
-        
         if not uid or not nombre or not hotel_principal:
             return jsonify({"error": "UID, nombre y hotel principal requeridos"}), 400
-        
         # Verificar límites del plan
         user_plan = get_user_plan(uid)
         plan_limits = PLAN_LIMITS.get(user_plan, PLAN_LIMITS["free_trial"])
-        
-    # Contar grupos existentes
+        # Contar grupos existentes
         grupos_ref = db.collection('users').document(uid).collection('grupos')
         grupos_existentes = len(list(grupos_ref.stream()))
-        
         if grupos_existentes >= plan_limits["max_groups"]:
             return jsonify({
                 "error": f"Tu plan {user_plan} permite máximo {plan_limits['max_groups']} grupos"
             }), 400
-        
         # Crear grupo
         grupo_ref = db.collection('users').document(uid).collection('grupos').document()
         grupo_ref.set({
@@ -533,133 +528,105 @@ def crear_grupo():
             'schedule_enabled': False,
             'created_at': datetime.now()
         })
-        
         return jsonify({"success": True, "message": "Grupo creado"})
-        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/agregar-competidor', methods=['POST'])
 def agregar_competidor():
     try:
-    data = request.get_json()
-    uid = data.get('uid')
+        data = request.get_json()
+        uid = data.get('uid')
         grupo_id = data.get('grupo_id')
         competidor_url = data.get('competidor_url')
-        
         if not uid or not grupo_id or not competidor_url:
             return jsonify({"error": "UID, grupo_id y competidor_url requeridos"}), 400
-        
         # Verificar límites del plan
         user_plan = get_user_plan(uid)
         plan_limits = PLAN_LIMITS.get(user_plan, PLAN_LIMITS["free_trial"])
-        
         # Obtener grupo actual
         grupo_ref = db.collection('users').document(uid).collection('grupos').document(grupo_id)
         grupo = grupo_ref.get()
-        
         if not grupo.exists:
             return jsonify({"error": "Grupo no encontrado"}), 404
-        
         grupo_data = grupo.to_dict()
         competidores_actuales = len(grupo_data.get('competidores', []))
-        
         if competidores_actuales >= plan_limits["max_competitors"]:
             return jsonify({
                 "error": f"Tu plan {user_plan} permite máximo {plan_limits['max_competitors']} competidores"
             }), 400
-        
         # Agregar competidor
         competidores = grupo_data.get('competidores', [])
         competidores.append(competidor_url)
-        
         grupo_ref.update({
             'competidores': competidores
         })
-        
         return jsonify({"success": True, "message": "Competidor agregado"})
-        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/configurar-dias', methods=['POST'])
 def configurar_dias():
     try:
-    data = request.get_json()
-    uid = data.get('uid')
+        data = request.get_json()
+        uid = data.get('uid')
         grupo_id = data.get('grupo_id')
         dias = data.get('dias')
-        
         if not uid or not grupo_id or not dias:
             return jsonify({"error": "UID, grupo_id y dias requeridos"}), 400
-        
         # Verificar límites del plan
         user_plan = get_user_plan(uid)
         plan_limits = PLAN_LIMITS.get(user_plan, PLAN_LIMITS["free_trial"])
-        
         if dias > plan_limits["max_days"]:
             return jsonify({
                 "error": f"Tu plan {user_plan} permite máximo {plan_limits['max_days']} días"
             }), 400
-        
         # Actualizar días
         grupo_ref = db.collection('users').document(uid).collection('grupos').document(grupo_id)
         grupo_ref.update({
             'days': dias
         })
-        
         return jsonify({"success": True, "message": "Días configurados"})
-        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/configurar-schedule', methods=['POST'])
 def configurar_schedule():
     try:
-    data = request.get_json()
-    uid = data.get('uid')
+        data = request.get_json()
+        uid = data.get('uid')
         grupo_id = data.get('grupo_id')
         enabled = data.get('enabled', False)
-        
         if not uid or not grupo_id:
             return jsonify({"error": "UID y grupo_id requeridos"}), 400
-        
         # Verificar si el plan permite scheduling
         user_plan = get_user_plan(uid)
         plan_limits = PLAN_LIMITS.get(user_plan, PLAN_LIMITS["free_trial"])
-        
         if enabled and not plan_limits["scheduling"]:
             return jsonify({
                 "error": f"Tu plan {user_plan} no permite programación automática"
             }), 400
-        
         # Actualizar schedule
         grupo_ref = db.collection('users').document(uid).collection('grupos').document(grupo_id)
         grupo_ref.update({
             'schedule_enabled': enabled
         })
-        
         return jsonify({"success": True, "message": "Schedule configurado"})
-        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/create-subscription-checkout', methods=['POST'])
 def create_subscription_checkout():
     try:
-    data = request.get_json()
+        data = request.get_json()
         plan = data.get('plan')
         user_email = data.get('user_email')
-        
         if not plan or not user_email:
             return jsonify({"error": "Plan y email requeridos"}), 400
-        
         if plan not in MP_PLAN_IDS:
             return jsonify({"error": "Plan no válido"}), 400
-        
         # Configurar Mercado Pago
         mp = mercadopago.SDK(os.environ.get('MP_ACCESS_TOKEN'))
-        
         # Crear preferencia de suscripción
         preference_data = {
             "items": [
@@ -680,10 +647,8 @@ def create_subscription_checkout():
             "auto_return": "approved",
             "external_reference": f"plan_{plan}_{user_email}",
             "notification_url": "https://tu-backend.com/mercado-pago-webhook"
-    }
-        
+        }
         preference = mp.preference().create(preference_data)
-        
         if preference["status"] == "created":
             return jsonify({
                 "success": True,
@@ -692,7 +657,6 @@ def create_subscription_checkout():
             })
         else:
             return jsonify({"error": "Error creando preferencia"}), 500
-        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -732,7 +696,7 @@ def mercado_pago_webhook():
                                 
                                 for user in users:
                                     user_ref = db.collection('users').document(user.id)
-                    user_ref.update({
+                                    user_ref.update({
                                         'plan': plan,
                                         'plan_updated_at': datetime.now()
                                     })

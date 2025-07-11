@@ -114,7 +114,17 @@ def scrape_booking_data(hotel_base_urls, days=2, nights=1, currency="USD"):
     for hotel_name, base_url, checkin, price in results:
         if base_url not in df_dict:
             df_dict[base_url] = {"Hotel Name": hotel_name, "URL": base_url}
-        df_dict[base_url][checkin] = price
+        # Si nights > 1 y price es numérico, dividir por nights para obtener precio por noche
+        if price is not None:
+            try:
+                price_float = float(price)
+                if nights > 1:
+                    price_float = round(price_float / nights, 2)
+                df_dict[base_url][checkin] = price_float
+            except Exception:
+                df_dict[base_url][checkin] = price
+        else:
+            df_dict[base_url][checkin] = price
     final_results = list(df_dict.values())
     logger.info(f"Scraping completado. Total de hoteles procesados: {len(final_results)}")
     return final_results

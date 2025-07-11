@@ -18,6 +18,7 @@ from mailersend import emails
 from time import sleep
 import mercadopago
 import time
+from firebase_admin import firestore as firebase_firestore
 
 # --- CONFIGURACIÓN DE LOGGING ---
 logging.basicConfig(level=logging.INFO)
@@ -114,7 +115,7 @@ def get_user_plan(uid):
         return 'free_trial'
 
 # --- FUNCIÓN ASÍNCRONA PARA EL SCRAPER (SIMPLE) ---
-def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, nights=1, currency="USD", report_id=None):
+def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, nights=1, currency="USD", report_id=None, userId=None, setId=None):
     global scraper_status
     try:
         logger.info("Iniciando scraper asíncrono")
@@ -137,6 +138,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             for k in hotel.keys():
                 if k not in ("Hotel Name", "URL"):
                     all_dates.add(k)
+        # Ordenar fechas cronológicamente de menor a mayor
         from datetime import datetime as dt
         all_dates = sorted(all_dates, key=lambda x: dt.strptime(x, "%Y-%m-%d"))
         chartData = []
@@ -145,10 +147,8 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             for hotel in result:
                 name = hotel["Hotel Name"]
                 price = hotel.get(date, None)
-                if price == "N/A":
-                    day_obj[name] = None
-                elif price is None:
-                    day_obj[name] = None
+                if price == "N/A" or price is None:
+                    day_obj[name] = None  # Celda vacía
                 else:
                     try:
                         day_obj[name] = float(price)
@@ -176,21 +176,21 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                     promedio = sum(precios_competidores) / len(precios_competidores)
                     promedio_competidores_row[date] = str(round(promedio, 2))
                 else:
-                    promedio_competidores_row[date] = "N/A"
+                    promedio_competidores_row[date] = None
                 if hotel_principal in precios_validos:
                     disponibilidad_row[date] = "100"
                 else:
                     disponibilidad_row[date] = "0"
-                if hotel_principal in precios_validos and promedio_competidores_row[date] not in ("N/A", None):
+                if hotel_principal in precios_validos and promedio_competidores_row[date] not in (None, ""):
                     mi_precio = precios_validos[hotel_principal]
                     diff_percent = ((mi_precio - float(promedio_competidores_row[date])) / float(promedio_competidores_row[date])) * 100
                     diferencia_row[date] = str(round(diff_percent, 0))
                 else:
-                    diferencia_row[date] = "N/A"
+                    diferencia_row[date] = None
             else:
-                promedio_competidores_row[date] = "N/A"
-                disponibilidad_row[date] = "N/A"
-                diferencia_row[date] = "N/A"
+                promedio_competidores_row[date] = None
+                disponibilidad_row[date] = None
+                diferencia_row[date] = None
         result.append(promedio_competidores_row)
         result.append(disponibilidad_row)
         result.append(diferencia_row)
@@ -221,15 +221,19 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         excel_blob.upload_from_file(excel_buffer, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         logger.info(f"Archivo Excel generado y subido: {excel_blob_name}")
         # --- GUARDAR EN FIRESTORE ---
+        now = firebase_firestore.SERVER_TIMESTAMP
         report_data = {
-            "setName": setName,
-            "hotelNames": hotelNames,
+            "status": "completed",
+            "csvFileUrl": f"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{csv_blob_name}",
+            "xlsxFileUrl": f"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{excel_blob_name}",
+            "createdAt": now,
+            "completedAt": now,
             "chartData": chartData,
+            "hotelNames": hotelNames,
+            "userId": userId,
+            "setId": setId if setId else report_id,
+            "setName": setName,
             "result": result,
-            "csv_url": f"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{csv_blob_name}",
-            "excel_url": f"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{excel_blob_name}",
-            "created_at": datetime.now(),
-            "userEmail": userEmail,
             "days": days,
             "nights": nights,
             "currency": currency
@@ -272,6 +276,15 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         logger.info("Scraper completado exitosamente")
     except Exception as e:
         logger.error(f"Error en scraper: {e}")
+        # Actualizar el documento con status failed y completedAt
+        try:
+            now = firebase_firestore.SERVER_TIMESTAMP
+            db.collection("scraping_reports").document(report_id).update({
+                "status": "failed",
+                "completedAt": now
+            })
+        except Exception as e2:
+            logger.error(f"Error actualizando status failed en Firestore: {e2}")
         scraper_status["error"] = str(e)
         scraper_status["is_running"] = False
         scraper_status["current_user"] = None
@@ -321,7 +334,7 @@ def run_scraper():
         scraper_status["current_user"] = uid
         thread = threading.Thread(
             target=run_scraper_async,
-            args=(hotel_base_urls, days, userEmail, setName, nights, currency, report_id)
+            args=(hotel_base_urls, days, userEmail, setName, nights, currency, report_id, uid, report_id) # Pasar userId y setId
         )
         thread.daemon = True
         thread.start()
@@ -469,7 +482,7 @@ def execute_scheduled_tasks():
                 
         thread = threading.Thread(
             target=run_scraper_async,
-                    args=(hotel_urls, grupo_data.get('days', 7), grupo_data.get('userEmail'), grupo_data.get('name'))
+                    args=(hotel_urls, grupo_data.get('days', 7), grupo_data.get('userEmail'), grupo_data.get('name'), grupo_data.get('nights', 1), grupo_data.get('currency', 'USD'), None, uid, grupo_data.get('id')) # Pasar userId y setId
         )
         thread.daemon = True
         thread.start()
@@ -864,21 +877,21 @@ def test_metricas():
                     promedio = sum(precios_competidores) / len(precios_competidores)
                     promedio_competidores_row[date] = str(round(promedio, 2))
                 else:
-                    promedio_competidores_row[date] = "N/A"
+                    promedio_competidores_row[date] = None
                 if hotel_principal in precios_validos:
                     disponibilidad_row[date] = "100"
                 else:
                     disponibilidad_row[date] = "0"
-                if hotel_principal in precios_validos and promedio_competidores_row[date] not in ("N/A", None):
+                if hotel_principal in precios_validos and promedio_competidores_row[date] not in (None, ""):
                     mi_precio = precios_validos[hotel_principal]
                     diff_percent = ((mi_precio - float(promedio_competidores_row[date])) / float(promedio_competidores_row[date])) * 100
                     diferencia_row[date] = str(round(diff_percent, 0))
                 else:
-                    diferencia_row[date] = "N/A"
+                    diferencia_row[date] = None
             else:
-                promedio_competidores_row[date] = "N/A"
-                disponibilidad_row[date] = "N/A"
-                diferencia_row[date] = "N/A"
+                promedio_competidores_row[date] = None
+                disponibilidad_row[date] = None
+                diferencia_row[date] = None
         
         result.append(promedio_competidores_row)
         result.append(disponibilidad_row)

@@ -143,25 +143,71 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         from datetime import datetime as dt
         all_dates = sorted(all_dates, key=lambda x: dt.strptime(x, "%Y-%m-%d"))
         column_order = ["Hotel Name", "URL"] + all_dates
+        
+        # Generar chartData con el formato correcto para el frontend
         chartData = []
         for date in all_dates:
             day_obj = {"date": date}
+            
+            # Añadir precios de cada hotel
             for hotel in result:
                 name = hotel["Hotel Name"]
                 price = hotel.get(date, None)
-                if price is None:
-                    day_obj[name] = None  # Celda vacía
-                else:
+                if price is not None:
                     try:
                         day_obj[name] = float(price)
                     except:
                         day_obj[name] = None
+                else:
+                    day_obj[name] = None
+            
+            # Calcular métricas para esta fecha
+            precios_validos = {}
+            for hotel in result:
+                name = hotel["Hotel Name"]
+                price = hotel.get(date, None)
+                if price is not None:
+                    try:
+                        precios_validos[name] = float(price)
+                    except:
+                        pass
+            
+            # Calcular promedio de competidores
+            hotel_principal = hotelNames[0] if hotelNames else None
+            competidores = hotelNames[1:] if len(hotelNames) > 1 else []
+            
+            if competidores and hotel_principal:
+                precios_competidores = [precios_validos.get(comp, 0) for comp in competidores if precios_validos.get(comp, 0) > 0]
+                if precios_competidores:
+                    promedio = sum(precios_competidores) / len(precios_competidores)
+                    day_obj["Tarifa promedio de competidores"] = round(promedio, 2)
+                else:
+                    day_obj["Tarifa promedio de competidores"] = None
+                
+                # Calcular disponibilidad (%)
+                total_hoteles = len(hotelNames)
+                hoteles_con_precio = len([name for name in hotelNames if precios_validos.get(name) is not None])
+                disponibilidad_porcentaje = round((hoteles_con_precio / total_hoteles) * 100) if total_hoteles > 0 else 0
+                day_obj["Disponibilidad de la oferta (%)"] = disponibilidad_porcentaje
+            else:
+                day_obj["Tarifa promedio de competidores"] = None
+                day_obj["Disponibilidad de la oferta (%)"] = None
+            
             chartData.append(day_obj)
-        hotel_principal = hotelNames[0] if hotelNames else None
-        competidores = hotelNames[1:] if len(hotelNames) > 1 else []
+        
+        # Asegurar que hotelNames esté correctamente ordenado (hotel principal primero)
+        # El primer hotel en la lista debe ser el hotel principal del usuario
+        if hotelNames:
+            hotel_principal = hotelNames[0]
+            competidores = hotelNames[1:]
+            # Reordenar si es necesario para asegurar que el hotel principal esté primero
+            hotelNames = [hotel_principal] + competidores
+        
+        # Generar filas de métricas para los archivos Excel/CSV
         promedio_competidores_row = {"Hotel Name": "Tarifa promedio de competidores", "URL": ""}
         disponibilidad_row = {"Hotel Name": "Disponibilidad de la oferta (%)", "URL": ""}
         diferencia_row = {"Hotel Name": "Diferencia de mi tarifa vs. la tarifa promedio de los competidores (%)", "URL": ""}
+        
         for date in all_dates:
             precios_validos = {}
             for hotel in result:
@@ -172,6 +218,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                         precios_validos[name] = float(price)
                     except:
                         pass
+            
             if competidores and hotel_principal:
                 precios_competidores = [precios_validos.get(comp, 0) for comp in competidores if precios_validos.get(comp, 0) > 0]
                 if precios_competidores:
@@ -179,10 +226,12 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                     promedio_competidores_row[date] = str(round(promedio, 2))
                 else:
                     promedio_competidores_row[date] = ''
+                
                 if hotel_principal in precios_validos:
                     disponibilidad_row[date] = "100"
                 else:
                     disponibilidad_row[date] = "0"
+                
                 if hotel_principal in precios_validos and promedio_competidores_row[date] not in (None, ""):
                     mi_precio = precios_validos[hotel_principal]
                     diff_percent = ((mi_precio - float(promedio_competidores_row[date])) / float(promedio_competidores_row[date])) * 100
@@ -193,6 +242,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                 promedio_competidores_row[date] = ''
                 disponibilidad_row[date] = ''
                 diferencia_row[date] = ''
+        
         result.append(promedio_competidores_row)
         result.append(disponibilidad_row)
         result.append(diferencia_row)

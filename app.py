@@ -303,8 +303,8 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                 mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
                 mail_body = {
                     "from": {
-                        "email": "noreply@competitoreye.com",
-                        "name": "Competitor Eye"
+                        "email": os.environ.get('MAILERSEND_SENDER_EMAIL', 'noreply@competitoreye.com'),
+                        "name": os.environ.get('MAILERSEND_SENDER_NAME', 'Competitor Eye')
                     },
                     "to": [
                         {
@@ -322,8 +322,8 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                     </ul>
                     """
                 }
-                mailer.send(mail_body)
-                logger.info(f"Correo enviado a {userEmail}")
+                response = mailer.send(mail_body)
+                logger.info(f"Respuesta de MailerSend: {response}")
         except Exception as e:
             logger.error(f"Error enviando correo: {e}")
         # Actualizar estado

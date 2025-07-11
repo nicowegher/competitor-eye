@@ -482,24 +482,20 @@ def execute_scheduled_tasks():
 @app.route('/init-user', methods=['POST'])
 def init_user():
     try:
-    data = request.get_json()
-    uid = data.get('uid')
-    email = data.get('email')
+        data = request.get_json()
+        uid = data.get('uid')
+        email = data.get('email')
         plan = data.get('plan', 'free_trial')
-        
-    if not uid or not email:
+        if not uid or not email:
             return jsonify({"error": "UID y email requeridos"}), 400
-
         # Crear o actualizar usuario
-    user_ref = db.collection('users').document(uid)
-    user_ref.set({
+        user_ref = db.collection('users').document(uid)
+        user_ref.set({
             'email': email,
             'plan': plan,
             'created_at': datetime.now()
         })
-        
         return jsonify({"success": True, "message": "Usuario inicializado"})
-        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

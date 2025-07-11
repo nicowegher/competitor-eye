@@ -93,7 +93,7 @@ def scrape_booking_data(hotel_base_urls, days=2, nights=1, currency="USD"):
     logger.info(f"Total de tareas a ejecutar: {len(tasks)}")
     results = []
     completed = 0
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         future_to_task = {
             executor.submit(fetch_price_for_night, client, base_url, hotel_name, checkin, checkout, currency): (base_url, hotel_name, checkin, checkout)
             for (base_url, hotel_name, checkin, checkout) in tasks
@@ -108,7 +108,7 @@ def scrape_booking_data(hotel_base_urls, days=2, nights=1, currency="USD"):
             except Exception as exc:
                 logger.error(f"Error en {hotel_name} {checkin}: {exc}")
                 results.append((hotel_name, base_url, checkin, "N/A"))
-            time.sleep(1)
+            time.sleep(0.5)
     # Construir DataFrame
     df_dict = {}
     for hotel_name, base_url, checkin, price in results:

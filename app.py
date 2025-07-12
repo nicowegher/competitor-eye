@@ -61,6 +61,9 @@ scraper_status = {
     "current_user": None
 }
 
+# Variable global para controlar si hay un scraper corriendo
+scraper_en_proceso = threading.Event()
+
 # --- LÍMITES POR PLAN ---
 PLAN_LIMITS = {
     "free_trial": {
@@ -119,14 +122,14 @@ def get_user_plan(uid):
 def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, nights=1, currency="USD", report_id=None, userId=None, setId=None):
     global scraper_status
     try:
-        logger.info("Iniciando scraper asíncrono")
+        logger.info(f"[Scraper] INICIO run_scraper_async para reporte: {report_id} | hoteles: {hotel_base_urls}")
         scraper_status["is_running"] = True
         scraper_status["error"] = None
         scraper_status["progress"] = 0
         
         from apify_scraper import scrape_booking_data
         
-        logger.info(f"Ejecutando scraper para {len(hotel_base_urls)} hoteles por {days} días, {nights} noches, moneda {currency}")
+        logger.info(f"[Scraper] Ejecutando scraper para {len(hotel_base_urls)} hoteles por {days} días, {nights} noches, moneda {currency}")
         result = scrape_booking_data(hotel_base_urls, days, nights, currency)
         
         if not result:
@@ -265,7 +268,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         # Añadir metadatos personalizados con userId para las reglas de seguridad
         csv_blob.metadata = {'userId': userId}
         csv_blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
-        logger.info(f"Archivo CSV generado y subido: {csv_blob_name}")
+        logger.info(f"[Scraper] Archivo CSV generado y subido: {csv_blob_name}")
         df_excel = pd.DataFrame(result)
         df_excel = df_excel.reindex(columns=column_order)
         with pd.ExcelWriter('temp_excel_upload.xlsx', engine='openpyxl') as writer:
@@ -276,7 +279,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             excel_blob.metadata = {'userId': userId}
             excel_blob.upload_from_file(f, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         os.remove('temp_excel_upload.xlsx')
-        logger.info(f"Archivo Excel generado y subido: {excel_blob_name}")
+        logger.info(f"[Scraper] Archivo Excel generado y subido: {excel_blob_name}")
         # --- GUARDAR EN FIRESTORE ---
         now = firestore.SERVER_TIMESTAMP
         report_data = {
@@ -296,7 +299,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             "currency": currency
         }
         db.collection("scraping_reports").document(report_id).set(report_data)
-        logger.info(f"Reporte guardado en Firestore con ID: {report_id}")
+        logger.info(f"[Scraper] Reporte guardado en Firestore con ID: {report_id} (status: completed)")
         # --- ENVIAR CORREO AL USUARIO ---
         try:
             if userEmail:
@@ -356,32 +359,39 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
 """
                 }
                 response = mailer.send(mail_body)
-                logger.info(f"Respuesta de MailerSend: {response}")
+                logger.info(f"[Scraper] Respuesta de MailerSend: {response}")
         except Exception as e:
-            logger.error(f"Error enviando correo: {e}")
+            logger.error(f"[Scraper] Error enviando correo: {e}")
         # Actualizar estado
         scraper_status["result"] = report_data
         scraper_status["progress"] = 100
         scraper_status["is_running"] = False
-        logger.info("Scraper completado exitosamente")
+        logger.info("[Scraper] FIN run_scraper_async (éxito)")
     except Exception as e:
-        logger.error(f"Error en scraper: {e}")
+        logger.error(f"[Scraper] Error en scraper: {e}")
         # Actualizar el documento con status failed y completedAt
         try:
             now = firestore.SERVER_TIMESTAMP
             db.collection("scraping_reports").document(report_id).update({
                 "status": "failed",
-                "completedAt": now
+                "completedAt": now,
+                "error": str(e)
             })
+            logger.info(f"[Scraper] Reporte {report_id} marcado como failed en Firestore")
         except Exception as e2:
-            logger.error(f"Error actualizando status failed en Firestore: {e2}")
+            logger.error(f"[Scraper] Error actualizando status failed en Firestore: {e2}")
         scraper_status["error"] = str(e)
         scraper_status["is_running"] = False
         scraper_status["current_user"] = None
+        logger.info("[Scraper] FIN run_scraper_async (fallo)")
 
 def cola_procesadora_scraping():
+    global scraper_en_proceso
     while True:
         try:
+            if scraper_en_proceso.is_set():
+                time.sleep(5)
+                continue
             logger.info("[ColaScraping] Bucle activo. Buscando tareas encoladas...")
             query = (
                 db.collection('scraping_reports')
@@ -422,8 +432,9 @@ def cola_procesadora_scraping():
                 doc_ref.update({'status': 'failed', 'error': 'No se encontraron hoteles para analizar'})
                 continue
             logger.info(f"[ColaScraping] Procesando tarea: {doc_ref.id} - {data.get('setName', '')} con hoteles: {hotel_base_urls}")
-            # Intentar bloquear la tarea (poner en pending)
             doc_ref.update({'status': 'pending'})
+            # Marcar que hay un scraper en proceso
+            scraper_en_proceso.set()
             # Ejecutar el scraper con los datos del documento
             run_scraper_async(
                 hotel_base_urls,
@@ -436,6 +447,8 @@ def cola_procesadora_scraping():
                 userId=data.get('userId', None),
                 setId=data.get('setId', None)
             )
+            # Cuando termine, limpiar el flag
+            scraper_en_proceso.clear()
         except Exception as e:
             logger.error(f"[ColaScraping] Error en cola_procesadora_scraping: {e}")
         time.sleep(5)

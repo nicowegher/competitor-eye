@@ -379,6 +379,36 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         scraper_status["is_running"] = False
         scraper_status["current_user"] = None
 
+def cola_procesadora_scraping():
+    while True:
+        try:
+            # Buscar la tarea más antigua con status 'queued'
+            query = db.collection('scraping_reports').where('status', '==', 'queued').order_by('createdAt').limit(1)
+            docs = list(query.stream())
+            if not docs:
+                time.sleep(30)
+                continue
+            doc = docs[0]
+            doc_ref = doc.reference
+            data = doc.to_dict()
+            # Intentar bloquear la tarea (poner en pending)
+            doc_ref.update({'status': 'pending'})
+            # Ejecutar el scraper con los datos del documento
+            run_scraper_async(
+                data.get('hotel_base_urls', []),
+                data.get('days', 7),
+                data.get('userEmail', None),
+                data.get('setName', None),
+                data.get('nights', 1),
+                data.get('currency', 'USD'),
+                report_id=doc_ref.id,
+                userId=data.get('userId', None),
+                setId=data.get('setId', None)
+            )
+        except Exception as e:
+            logger.error(f"Error en cola_procesadora_scraping: {e}")
+        time.sleep(5)
+
 # --- ENDPOINT PRINCIPAL (SIMPLE) ---
 @app.route('/run-scraper', methods=['POST'])
 def run_scraper():
@@ -568,17 +598,21 @@ def execute_scheduled_tasks():
         for grupo in grupos:
             grupo_data = grupo.to_dict()
             if grupo_data.get('schedule_enabled', False):
-                # Ejecutar scraper para este grupo
                 hotel_urls = [grupo_data.get('hotel_principal')] + grupo_data.get('competidores', [])
-                
-        thread = threading.Thread(
-            target=run_scraper_async,
-                    args=(hotel_urls, grupo_data.get('days', 7), grupo_data.get('userEmail'), grupo_data.get('name'), grupo_data.get('nights', 1), grupo_data.get('currency', 'USD'), None, uid, grupo_data.get('id')) # Pasar userId y setId
-        )
-        thread.daemon = True
-        thread.start()
-        
-        return jsonify({"success": True, "message": "Tareas programadas ejecutadas"})
+                report_doc = {
+                    'userId': uid,
+                    'setId': grupo_data.get('id'),
+                    'setName': grupo_data.get('name'),
+                    'hotel_base_urls': hotel_urls,
+                    'days': grupo_data.get('days', 7),
+                    'nights': grupo_data.get('nights', 1),
+                    'currency': grupo_data.get('currency', 'USD'),
+                    'userEmail': grupo_data.get('userEmail', None),
+                    'status': 'queued',
+                    'createdAt': datetime.now(),
+                }
+                db.collection('scraping_reports').add(report_doc)
+        return jsonify({"success": True, "message": "Tareas programadas encoladas"})
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -997,4 +1031,5 @@ def test_metricas():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
+    threading.Thread(target=cola_procesadora_scraping, daemon=True).start()
     app.run(debug=True, host='0.0.0.0', port=5000) 

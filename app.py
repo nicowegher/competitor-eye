@@ -400,12 +400,23 @@ def cola_procesadora_scraping():
             if data is None:
                 logger.error(f"[ColaScraping] El documento {doc_ref.id} no tiene datos. Saltando...")
                 continue
+            # LOGS DE DEPURACIÓN
+            logger.info(f"[ColaScraping][DEBUG] Documento Firestore data: {data}")
+            logger.info(f"[ColaScraping][DEBUG] ownHotelUrl: {data.get('ownHotelUrl')} (tipo: {type(data.get('ownHotelUrl'))})")
+            logger.info(f"[ColaScraping][DEBUG] competitorHotelUrls: {data.get('competitorHotelUrls')} (tipo: {type(data.get('competitorHotelUrls'))})")
             # Obtener hoteles directamente del documento (denormalización)
             hotel_base_urls = []
             if data.get('ownHotelUrl'):
                 hotel_base_urls.append(data['ownHotelUrl'])
-            if data.get('competitorHotelUrls'):
-                hotel_base_urls.extend(data['competitorHotelUrls'])
+            comp_urls = data.get('competitorHotelUrls')
+            if comp_urls:
+                if isinstance(comp_urls, list):
+                    hotel_base_urls.extend(comp_urls)
+                elif isinstance(comp_urls, str):
+                    hotel_base_urls.append(comp_urls)
+                else:
+                    logger.warning(f"[ColaScraping][DEBUG] competitorHotelUrls tiene un tipo inesperado: {type(comp_urls)}")
+            logger.info(f"[ColaScraping][DEBUG] hotel_base_urls final: {hotel_base_urls}")
             if not hotel_base_urls:
                 logger.error(f"[ColaScraping] La tarea {doc_ref.id} no tiene hoteles para analizar. Saltando...")
                 doc_ref.update({'status': 'failed', 'error': 'No se encontraron hoteles para analizar'})

@@ -1040,6 +1040,9 @@ def test_metricas():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# Lanzar el procesador de la cola SIEMPRE, no solo en modo script
+import threading
+threading.Thread(target=cola_procesadora_scraping, daemon=True).start()
+
 if __name__ == '__main__':
-    threading.Thread(target=cola_procesadora_scraping, daemon=True).start()
     app.run(debug=True, host='0.0.0.0', port=5000) 

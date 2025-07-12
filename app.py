@@ -303,8 +303,8 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                 mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
                 mail_body = {
                     "from": {
-                        "email": os.environ.get('MAILERSEND_SENDER_EMAIL', 'noreply@competitoreye.com'),
-                        "name": os.environ.get('MAILERSEND_SENDER_NAME', 'Competitor Eye')
+                        "email": os.environ.get('MAILERSEND_SENDER_EMAIL', 'noreply@hotelrateshopper.com'),
+                        "name": os.environ.get('MAILERSEND_SENDER_NAME', 'Hotel Rate Shopper')
                     },
                     "to": [
                         {
@@ -312,15 +312,48 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                             "name": "Usuario"
                         }
                     ],
-                    "subject": f"Tu reporte de tarifas está listo: {setName}",
+                    "subject": f"¡Tu informe para '{setName}' está listo!",
+                    "reply_to": [
+                        {
+                            "email": "nicolas.wegher@gmail.com",
+                            "name": "Nicolás Wegher"
+                        }
+                    ],
                     "html": f"""
-                    <h2>¡Tu reporte está listo!</h2>
-                    <p>Puedes descargar los archivos aquí:</p>
-                    <ul>
-                        <li><a href='https://storage.googleapis.com/{GCS_BUCKET_NAME}/{csv_blob_name}'>Descargar CSV</a></li>
-                        <li><a href='https://storage.googleapis.com/{GCS_BUCKET_NAME}/{excel_blob_name}'>Descargar Excel</a></li>
-                    </ul>
-                    """
+<!DOCTYPE html>
+<html lang=\"es\">
+  <head>
+    <meta charset=\"UTF-8\">
+    <title>¡Tu informe para '{setName}' está listo!</title>
+  </head>
+  <body style=\"font-family: Arial, sans-serif; background: #fff; color: #222; margin: 0; padding: 0;\">
+    <div style=\"max-width: 600px; margin: 40px auto; padding: 32px 24px; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);\">
+      <h1 style=\"color: #222; font-size: 2em; margin-bottom: 0.5em;\">¡Tu informe está listo!</h1>
+      <p>Hola,</p>
+      <p>
+        Tu informe de precios para el grupo competitivo <strong>'{setName}'</strong> ya está disponible.
+      </p>
+      <div style=\"margin: 32px 0;\">
+        <a href=\"https://hotelrateshopper.com/\" style=\"display: inline-block; background: #34a853; color: #fff; font-weight: bold; text-decoration: none; padding: 16px 32px; border-radius: 6px; font-size: 1.1em;\">
+          Ver mi informe en la plataforma
+        </a>
+      </div>
+      <p>También puedes descargar el informe directamente desde este correo:</p>
+      <div style=\"margin: 20px 0;\">
+        <a href=\"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{excel_blob_name}\" style=\"display: inline-block; background: #4285f4; color: #fff; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-size: 1em; margin-bottom: 8px;\">
+          Descargar Informe (Excel)
+        </a>
+      </div>
+      <div style=\"margin-bottom: 24px;\">
+        <a href=\"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{csv_blob_name}\" style=\"color: #4285f4; text-decoration: underline; font-size: 1em;\">
+          Descargar en formato .CSV
+        </a>
+      </div>
+      <p style=\"margin-top: 32px;\">Gracias por usar <a href=\"https://hotelrateshopper.com\" style=\"color: #4285f4; text-decoration: underline;\">HotelRateShopper.com</a></p>
+    </div>
+  </body>
+</html>
+"""
                 }
                 response = mailer.send(mail_body)
                 logger.info(f"Respuesta de MailerSend: {response}")

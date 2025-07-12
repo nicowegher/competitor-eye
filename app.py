@@ -400,12 +400,22 @@ def cola_procesadora_scraping():
             if data is None:
                 logger.error(f"[ColaScraping] El documento {doc_ref.id} no tiene datos. Saltando...")
                 continue
-            logger.info(f"[ColaScraping] Procesando tarea: {doc_ref.id} - {data.get('setName', '')}")
+            # Obtener hoteles directamente del documento (denormalización)
+            hotel_base_urls = []
+            if data.get('ownHotelUrl'):
+                hotel_base_urls.append(data['ownHotelUrl'])
+            if data.get('competitorHotelUrls'):
+                hotel_base_urls.extend(data['competitorHotelUrls'])
+            if not hotel_base_urls:
+                logger.error(f"[ColaScraping] La tarea {doc_ref.id} no tiene hoteles para analizar. Saltando...")
+                doc_ref.update({'status': 'failed', 'error': 'No se encontraron hoteles para analizar'})
+                continue
+            logger.info(f"[ColaScraping] Procesando tarea: {doc_ref.id} - {data.get('setName', '')} con hoteles: {hotel_base_urls}")
             # Intentar bloquear la tarea (poner en pending)
             doc_ref.update({'status': 'pending'})
             # Ejecutar el scraper con los datos del documento
             run_scraper_async(
-                data.get('hotel_base_urls', []),
+                hotel_base_urls,
                 data.get('days', data.get('daysToScrape', 7)),
                 data.get('userEmail', None),
                 data.get('setName', None),

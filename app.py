@@ -281,6 +281,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         os.remove('temp_excel_upload.xlsx')
         logger.info(f"[Scraper] Archivo Excel generado y subido: {excel_blob_name}")
         # --- GUARDAR EN FIRESTORE ---
+        logger.info(f"[Scraper] Preparando para guardar reporte en Firestore con ID: {report_id}")
         now = firestore.SERVER_TIMESTAMP
         report_data = {
             "status": "completed",
@@ -298,8 +299,12 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             "nights": nights,
             "currency": currency
         }
-        db.collection("scraping_reports").document(report_id).set(report_data)
-        logger.info(f"[Scraper] Reporte guardado en Firestore con ID: {report_id} (status: completed)")
+        try:
+            logger.info(f"[Scraper] Guardando documento en Firestore con .set()... (ID: {report_id})")
+            db.collection("scraping_reports").document(report_id).set(report_data)
+            logger.info(f"[Scraper] Documento guardado exitosamente en Firestore (ID: {report_id})")
+        except Exception as e:
+            logger.error(f"[Scraper] ERROR al guardar documento en Firestore (ID: {report_id}): {e}")
         # --- ENVIAR CORREO AL USUARIO ---
         try:
             if userEmail:
@@ -372,6 +377,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         # Actualizar el documento con status failed y completedAt
         try:
             now = firestore.SERVER_TIMESTAMP
+            logger.info(f"[Scraper] Intentando actualizar documento a failed en Firestore (ID: {report_id})...")
             db.collection("scraping_reports").document(report_id).update({
                 "status": "failed",
                 "completedAt": now,
@@ -379,7 +385,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             })
             logger.info(f"[Scraper] Reporte {report_id} marcado como failed en Firestore")
         except Exception as e2:
-            logger.error(f"[Scraper] Error actualizando status failed en Firestore: {e2}")
+            logger.error(f"[Scraper] ERROR actualizando status failed en Firestore: {e2}")
         scraper_status["error"] = str(e)
         scraper_status["is_running"] = False
         scraper_status["current_user"] = None

@@ -382,21 +382,31 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
 def cola_procesadora_scraping():
     while True:
         try:
-            # Buscar la tarea más antigua con status 'queued'
-            query = db.collection('scraping_reports').where('status', '==', 'queued').order_by('createdAt').limit(1)
+            logger.info("[ColaScraping] Bucle activo. Buscando tareas encoladas...")
+            query = (
+                db.collection('scraping_reports')
+                .where('status', '==', 'queued')
+                .order_by('createdAt')
+                .limit(1)
+            )
             docs = list(query.stream())
             if not docs:
-                time.sleep(30)
+                logger.info("[ColaScraping] No se encontraron tareas encoladas. Esperando 20s...")
+                time.sleep(20)
                 continue
             doc = docs[0]
             doc_ref = doc.reference
             data = doc.to_dict()
+            if data is None:
+                logger.error(f"[ColaScraping] El documento {doc_ref.id} no tiene datos. Saltando...")
+                continue
+            logger.info(f"[ColaScraping] Procesando tarea: {doc_ref.id} - {data.get('setName', '')}")
             # Intentar bloquear la tarea (poner en pending)
             doc_ref.update({'status': 'pending'})
             # Ejecutar el scraper con los datos del documento
             run_scraper_async(
                 data.get('hotel_base_urls', []),
-                data.get('days', 7),
+                data.get('days', data.get('daysToScrape', 7)),
                 data.get('userEmail', None),
                 data.get('setName', None),
                 data.get('nights', 1),
@@ -406,7 +416,7 @@ def cola_procesadora_scraping():
                 setId=data.get('setId', None)
             )
         except Exception as e:
-            logger.error(f"Error en cola_procesadora_scraping: {e}")
+            logger.error(f"[ColaScraping] Error en cola_procesadora_scraping: {e}")
         time.sleep(5)
 
 # --- ENDPOINT PRINCIPAL (SIMPLE) ---

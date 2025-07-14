@@ -297,10 +297,25 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         # --- GUARDAR EN FIRESTORE ---
         logger.info(f"[Scraper] PREPARANDO para guardar reporte en Firestore con ID: {report_id}")
         now = firestore.SERVER_TIMESTAMP
+
+        # Generar URLs firmadas para 10 días
+        csv_signed_url = csv_blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(days=10),
+            method="GET"
+        )
+        excel_signed_url = excel_blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(days=10),
+            method="GET"
+        )
+        logger.info(f"[Scraper] URL firmada CSV: {csv_signed_url}")
+        logger.info(f"[Scraper] URL firmada Excel: {excel_signed_url}")
+
         report_data = {
             "status": "completed",
-            "csvFileUrl": f"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{csv_blob_name}",
-            "xlsxFileUrl": f"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{excel_blob_name}",
+            "csvFileUrl": csv_signed_url,
+            "xlsxFileUrl": excel_signed_url,
             "createdAt": now,
             "completedAt": now,
             "chartData": chartData,
@@ -367,14 +382,14 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
           Ver mi informe en la plataforma
         </a>
       </div>
-      <p>También puedes descargar el informe directamente desde este correo:</p>
+      <p>También puedes descargar el informe directamente desde este correo. <b>Los enlaces estarán disponibles por 10 días</b>. Luego de ese plazo, siempre podrás acceder a tus informes desde la app.</p>
       <div style=\"margin: 20px 0;\">
-        <a href=\"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{excel_blob_name}\" style=\"display: inline-block; background: #4285f4; color: #fff; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-size: 1em; margin-bottom: 8px;\">
+        <a href=\"{excel_signed_url}\" style=\"display: inline-block; background: #4285f4; color: #fff; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-size: 1em; margin-bottom: 8px;\">
           Descargar Informe (Excel)
         </a>
       </div>
       <div style=\"margin-bottom: 24px;\">
-        <a href=\"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{csv_blob_name}\" style=\"color: #4285f4; text-decoration: underline; font-size: 1em;\">
+        <a href=\"{csv_signed_url}\" style=\"color: #4285f4; text-decoration: underline; font-size: 1em;\">
           Descargar en formato .CSV
         </a>
       </div>

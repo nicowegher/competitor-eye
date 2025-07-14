@@ -133,7 +133,10 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         result = scrape_booking_data(hotel_base_urls, days, nights, currency)
         
         if not result:
+            logger.error(f"[Scraper] ERROR: No se obtuvieron datos del scraper. Antes de raise Exception...")
             raise Exception("No se obtuvieron datos del scraper")
+        
+        logger.info(f"[Scraper] Datos obtenidos del scraper: {len(result)} hoteles")
         
         # --- ENRIQUECER DATOS PARA GRÁFICOS ---
         hotelNames = [hotel["Hotel Name"] for hotel in result]
@@ -146,6 +149,8 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         from datetime import datetime as dt
         all_dates = sorted(all_dates, key=lambda x: dt.strptime(x, "%Y-%m-%d"))
         column_order = ["Hotel Name", "URL"] + all_dates
+        
+        logger.info(f"[Scraper] Procesando {len(all_dates)} fechas para {len(hotelNames)} hoteles")
         
         # Generar chartData con el formato correcto para el frontend
         chartData = []
@@ -198,6 +203,8 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             
             chartData.append(day_obj)
         
+        logger.info(f"[Scraper] ChartData generado con {len(chartData)} días")
+        
         # Asegurar que hotelNames esté correctamente ordenado (hotel principal primero)
         # El primer hotel en la lista debe ser el hotel principal del usuario
         if hotelNames:
@@ -249,6 +256,9 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         result.append(promedio_competidores_row)
         result.append(disponibilidad_row)
         result.append(diferencia_row)
+        
+        logger.info(f"[Scraper] Métricas calculadas y agregadas al resultado")
+        
         # --- GENERAR ARCHIVOS ---
         def limpiar_nombre(nombre):
             import re
@@ -258,6 +268,9 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             report_id = f"{set_name_clean}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         csv_blob_name = f"reports/{report_id}.csv"
         excel_blob_name = f"reports/{report_id}.xlsx"
+        
+        logger.info(f"[Scraper] Generando archivos CSV y Excel para report_id: {report_id}")
+        
         # Crear DataFrame y forzar orden de columnas
         df_csv = pd.DataFrame(result)
         df_csv = df_csv.reindex(columns=column_order)
@@ -280,8 +293,9 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             excel_blob.upload_from_file(f, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         os.remove('temp_excel_upload.xlsx')
         logger.info(f"[Scraper] Archivo Excel generado y subido: {excel_blob_name}")
+        
         # --- GUARDAR EN FIRESTORE ---
-        logger.info(f"[Scraper] Preparando para guardar reporte en Firestore con ID: {report_id}")
+        logger.info(f"[Scraper] PREPARANDO para guardar reporte en Firestore con ID: {report_id}")
         now = firestore.SERVER_TIMESTAMP
         report_data = {
             "status": "completed",
@@ -299,15 +313,22 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             "nights": nights,
             "currency": currency
         }
+        
+        logger.info(f"[Scraper] ANTES de intentar guardar en Firestore. report_data keys: {list(report_data.keys())}")
+        
         try:
             logger.info(f"[Scraper] Guardando documento en Firestore con .set()... (ID: {report_id})")
             db.collection("scraping_reports").document(report_id).set(report_data)
-            logger.info(f"[Scraper] Documento guardado exitosamente en Firestore (ID: {report_id})")
+            logger.info(f"[Scraper] ✅ Documento guardado exitosamente en Firestore (ID: {report_id})")
         except Exception as e:
-            logger.error(f"[Scraper] ERROR al guardar documento en Firestore (ID: {report_id}): {e}")
+            logger.error(f"[Scraper] ❌ ERROR al guardar documento en Firestore (ID: {report_id}): {e}")
+            logger.error(f"[Scraper] ❌ Tipo de error: {type(e)}")
+            logger.error(f"[Scraper] ❌ Detalles completos del error: {str(e)}")
+        
         # --- ENVIAR CORREO AL USUARIO ---
         try:
             if userEmail:
+                logger.info(f"[Scraper] Enviando correo a: {userEmail}")
                 mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
                 mail_body = {
                     "from": {
@@ -364,16 +385,22 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
 """
                 }
                 response = mailer.send(mail_body)
-                logger.info(f"[Scraper] Respuesta de MailerSend: {response}")
+                logger.info(f"[Scraper] ✅ Correo enviado. Respuesta de MailerSend: {response}")
         except Exception as e:
-            logger.error(f"[Scraper] Error enviando correo: {e}")
+            logger.error(f"[Scraper] ❌ Error enviando correo: {e}")
+        
         # Actualizar estado
+        logger.info(f"[Scraper] Actualizando scraper_status...")
         scraper_status["result"] = report_data
         scraper_status["progress"] = 100
         scraper_status["is_running"] = False
-        logger.info("[Scraper] FIN run_scraper_async (éxito)")
+        logger.info(f"[Scraper] ✅ FIN run_scraper_async (éxito) - report_id: {report_id}")
+        
     except Exception as e:
-        logger.error(f"[Scraper] Error en scraper: {e}")
+        logger.error(f"[Scraper] ❌ ERROR en scraper: {e}")
+        logger.error(f"[Scraper] ❌ Tipo de error: {type(e)}")
+        logger.error(f"[Scraper] ❌ Antes de intentar actualizar documento a failed...")
+        
         # Actualizar el documento con status failed y completedAt
         try:
             now = firestore.SERVER_TIMESTAMP
@@ -383,13 +410,16 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                 "completedAt": now,
                 "error": str(e)
             })
-            logger.info(f"[Scraper] Reporte {report_id} marcado como failed en Firestore")
+            logger.info(f"[Scraper] ✅ Reporte {report_id} marcado como failed en Firestore")
         except Exception as e2:
-            logger.error(f"[Scraper] ERROR actualizando status failed en Firestore: {e2}")
+            logger.error(f"[Scraper] ❌ ERROR actualizando status failed en Firestore: {e2}")
+            logger.error(f"[Scraper] ❌ Tipo de error al actualizar: {type(e2)}")
+        
+        logger.info(f"[Scraper] Actualizando scraper_status con error...")
         scraper_status["error"] = str(e)
         scraper_status["is_running"] = False
         scraper_status["current_user"] = None
-        logger.info("[Scraper] FIN run_scraper_async (fallo)")
+        logger.info(f"[Scraper] ❌ FIN run_scraper_async (fallo) - report_id: {report_id}")
 
 def cola_procesadora_scraping():
     global scraper_en_proceso
@@ -999,86 +1029,68 @@ def debug_endpoint():
 
 @app.route('/test-metricas', methods=['GET'])
 def test_metricas():
+    return jsonify({"message": "Endpoint de test de métricas"})
+
+@app.route('/debug-update-task', methods=['POST'])
+def debug_update_task():
+    """
+    Endpoint temporal para probar actualización manual en Firestore
+    """
     try:
-        # Datos de ejemplo para probar las métricas
-        result = [
-            {
-                "Hotel Name": "Hotel Principal",
-                "URL": "https://example.com",
-                "2024-01-01": 100.0,
-                "2024-01-02": 110.0,
-                "2024-01-03": 105.0
-            },
-            {
-                "Hotel Name": "Competidor 1",
-                "URL": "https://example.com",
-                "2024-01-01": 95.0,
-                "2024-01-02": 105.0,
-                "2024-01-03": 100.0
-            },
-            {
-                "Hotel Name": "Competidor 2",
-                "URL": "https://example.com",
-                "2024-01-01": 105.0,
-                "2024-01-02": 115.0,
-                "2024-01-03": 110.0
+        data = request.get_json()
+        report_id = data.get('report_id')
+        new_status = data.get('status', 'completed')
+        
+        if not report_id:
+            return jsonify({"success": False, "error": "report_id es requerido"}), 400
+        
+        logger.info(f"[DEBUG] Intentando actualizar tarea {report_id} a status: {new_status}")
+        
+        # Intentar actualizar el documento
+        try:
+            now = firestore.SERVER_TIMESTAMP
+            update_data = {
+                "status": new_status,
+                "completedAt": now,
+                "debug_updated_at": now
             }
-        ]
-        
-        # Calcular métricas
-        hotel_principal = "Hotel Principal"
-        competidores = ["Competidor 1", "Competidor 2"]
-        
-        promedio_competidores_row = {"Hotel Name": "Tarifa promedio de competidores", "URL": ""}
-        disponibilidad_row = {"Hotel Name": "Disponibilidad de la oferta (%)", "URL": ""}
-        diferencia_row = {"Hotel Name": "Diferencia de mi tarifa vs. la tarifa promedio de los competidores (%)", "URL": ""}
-        
-        all_dates = ["2024-01-01", "2024-01-02", "2024-01-03"]
-        
-        for date in all_dates:
-            precios_validos = {}
-            for hotel in result:
-                name = hotel["Hotel Name"]
-                price = hotel.get(date, None)
-                if price is not None:
-                    try:
-                        precios_validos[name] = float(price)
-                    except:
-                        pass
-            # Calcular promedio de competidores
-            if competidores and hotel_principal:
-                precios_competidores = [precios_validos.get(comp, 0) for comp in competidores if precios_validos.get(comp, 0) > 0]
-                if precios_competidores:
-                    promedio = sum(precios_competidores) / len(precios_competidores)
-                    promedio_competidores_row[date] = str(round(promedio, 2))
-                else:
-                    promedio_competidores_row[date] = ''
-                if hotel_principal in precios_validos:
-                    disponibilidad_row[date] = "100"
-                else:
-                    disponibilidad_row[date] = "0"
-                if hotel_principal in precios_validos and promedio_competidores_row[date] not in (None, ""):
-                    mi_precio = precios_validos[hotel_principal]
-                    diff_percent = ((mi_precio - float(promedio_competidores_row[date])) / float(promedio_competidores_row[date])) * 100
-                    diferencia_row[date] = str(round(diff_percent, 0))
-                else:
-                    diferencia_row[date] = ''
-            else:
-                promedio_competidores_row[date] = ''
-                disponibilidad_row[date] = ''
-                diferencia_row[date] = ''
-        
-        result.append(promedio_competidores_row)
-        result.append(disponibilidad_row)
-        result.append(diferencia_row)
-        
-        return jsonify({
-            "success": True,
-            "result": result
-        })
-        
+            
+            logger.info(f"[DEBUG] Datos a actualizar: {update_data}")
+            
+            doc_ref = db.collection("scraping_reports").document(report_id)
+            
+            # Verificar si el documento existe
+            doc = doc_ref.get()
+            if not doc.exists:
+                logger.error(f"[DEBUG] ❌ Documento {report_id} no existe en Firestore")
+                return jsonify({"success": False, "error": f"Documento {report_id} no existe"}), 404
+            
+            logger.info(f"[DEBUG] ✅ Documento {report_id} existe. Actualizando...")
+            
+            # Intentar actualizar
+            doc_ref.update(update_data)
+            
+            logger.info(f"[DEBUG] ✅ Documento {report_id} actualizado exitosamente a status: {new_status}")
+            
+            return jsonify({
+                "success": True, 
+                "message": f"Documento {report_id} actualizado a {new_status}",
+                "report_id": report_id,
+                "new_status": new_status
+            })
+            
+        except Exception as e:
+            logger.error(f"[DEBUG] ❌ Error actualizando documento {report_id}: {e}")
+            logger.error(f"[DEBUG] ❌ Tipo de error: {type(e)}")
+            return jsonify({
+                "success": False, 
+                "error": f"Error actualizando Firestore: {str(e)}",
+                "error_type": str(type(e))
+            }), 500
+            
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"[DEBUG] ❌ Error general en debug-update-task: {e}")
+        return jsonify({"success": False, "error": f"Error general: {str(e)}"}), 500
 
 # Lanzar el procesador de la cola SIEMPRE, no solo en modo script
 import threading

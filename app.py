@@ -359,15 +359,15 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         logger.info(f"[Scraper] PREPARANDO para guardar reporte en Firestore con ID: {report_id}")
         now = firestore.SERVER_TIMESTAMP
 
-        # Generar URLs firmadas para 10 días
+        # Generar URLs firmadas para 7 días (máximo permitido por Google Cloud Storage)
         csv_signed_url = csv_blob.generate_signed_url(
             version="v4",
-            expiration=timedelta(days=10),
+            expiration=timedelta(days=7),
             method="GET"
         )
         excel_signed_url = excel_blob.generate_signed_url(
             version="v4",
-            expiration=timedelta(days=10),
+            expiration=timedelta(days=7),
             method="GET"
         )
         logger.info(f"[Scraper] URL firmada CSV: {csv_signed_url}")
@@ -443,7 +443,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
           Ver mi informe en la plataforma
         </a>
       </div>
-      <p>También puedes descargar el informe directamente desde este correo. <b>Los enlaces estarán disponibles por 10 días</b>. Luego de ese plazo, siempre podrás acceder a tus informes desde la app.</p>
+      <p>También puedes descargar el informe directamente desde este correo. <b>Los enlaces estarán disponibles por 7 días</b>. Luego de ese plazo, siempre podrás acceder a tus informes desde la app.</p>
       <div style=\"margin: 20px 0;\">
         <a href=\"{excel_signed_url}\" style=\"display: inline-block; background: #4285f4; color: #fff; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-size: 1em; margin-bottom: 8px;\">
           Descargar Informe (Excel)

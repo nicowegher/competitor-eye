@@ -18,6 +18,8 @@ from mailersend import emails
 from time import sleep
 import mercadopago
 import time
+from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.utils import get_column_letter
 
 # --- CONFIGURACIÓN DE LOGGING ---
 logging.basicConfig(level=logging.INFO)
@@ -284,8 +286,67 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         logger.info(f"[Scraper] Archivo CSV generado y subido: {csv_blob_name}")
         df_excel = pd.DataFrame(result)
         df_excel = df_excel.reindex(columns=column_order)
+        
+        # Convertir valores numéricos a string con coma como separador decimal (solo para Excel)
+        for col in df_excel.columns:
+            if col not in ["Hotel Name", "URL"]:  # Solo columnas de fechas
+                df_excel[col] = df_excel[col].apply(lambda x: str(x).replace('.', ',') if pd.notna(x) and x != '' else '')
+        
         with pd.ExcelWriter('temp_excel_upload.xlsx', engine='openpyxl') as writer:
             df_excel.to_excel(writer, sheet_name='Tarifas', index=False)
+            
+            # Obtener el workbook y worksheet para aplicar formato
+            workbook = writer.book
+            worksheet = writer.sheets['Tarifas']
+            
+            # Definir colores
+            azul_fondo = PatternFill(start_color='cfe2f3', end_color='cfe2f3', fill_type='solid')
+            azul_fuente = Font(color='0000ff')
+            verde_fuente = Font(color='00ff00')
+            rojo_fuente = Font(color='ff0000')
+            
+            # Aplicar formato a filas específicas
+            for row_idx, row in enumerate(worksheet.iter_rows(min_row=2, max_row=worksheet.max_row), start=2):
+                # Obtener el valor de la primera columna para identificar el tipo de fila
+                hotel_name_cell = row[0]
+                hotel_name = hotel_name_cell.value if hotel_name_cell.value else ""
+                
+                # Aplicar formato azul a filas específicas
+                if (row_idx == 2 or  # Fila del hotel principal
+                    "Tarifa promedio de competidores" in str(hotel_name) or
+                    "Disponibilidad de la oferta" in str(hotel_name)):
+                    
+                    for cell in row:
+                        cell.fill = azul_fondo
+                        cell.font = azul_fuente
+                
+                # Aplicar formato condicional a la fila de diferencias
+                elif "Diferencia de mi tarifa" in str(hotel_name):
+                    for cell in row[2:]:  # Desde la tercera columna (fechas)
+                        if cell.value:
+                            try:
+                                # Convertir a float para verificar si es negativo
+                                diff_value = float(str(cell.value).replace(',', '.'))
+                                if diff_value < 0:
+                                    cell.font = verde_fuente
+                                elif diff_value > 0:
+                                    cell.font = rojo_fuente
+                            except (ValueError, TypeError):
+                                pass
+            
+            # Ajustar ancho de columnas
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = get_column_letter(column[0].column)
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = min(max_length + 2, 50)
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+        
         with open('temp_excel_upload.xlsx', 'rb') as f:
             excel_blob = bucket.blob(excel_blob_name)
             # Añadir metadatos personalizados con userId para las reglas de seguridad
@@ -637,8 +698,67 @@ def descargar_excel():
         
         # Crear Excel
         df = pd.DataFrame(result)
+        
+        # Convertir valores numéricos a string con coma como separador decimal (solo para Excel)
+        for col in df.columns:
+            if col not in ["Hotel Name", "URL"]:  # Solo columnas de fechas
+                df[col] = df[col].apply(lambda x: str(x).replace('.', ',') if pd.notna(x) and x != '' else '')
+        
         with pd.ExcelWriter('temp_excel_download.xlsx', engine='openpyxl') as writer:
             df.to_excel(writer, sheet_name='Tarifas', index=False)
+            
+            # Obtener el workbook y worksheet para aplicar formato
+            workbook = writer.book
+            worksheet = writer.sheets['Tarifas']
+            
+            # Definir colores
+            azul_fondo = PatternFill(start_color='cfe2f3', end_color='cfe2f3', fill_type='solid')
+            azul_fuente = Font(color='0000ff')
+            verde_fuente = Font(color='00ff00')
+            rojo_fuente = Font(color='ff0000')
+            
+            # Aplicar formato a filas específicas
+            for row_idx, row in enumerate(worksheet.iter_rows(min_row=2, max_row=worksheet.max_row), start=2):
+                # Obtener el valor de la primera columna para identificar el tipo de fila
+                hotel_name_cell = row[0]
+                hotel_name = hotel_name_cell.value if hotel_name_cell.value else ""
+                
+                # Aplicar formato azul a filas específicas
+                if (row_idx == 2 or  # Fila del hotel principal
+                    "Tarifa promedio de competidores" in str(hotel_name) or
+                    "Disponibilidad de la oferta" in str(hotel_name)):
+                    
+                    for cell in row:
+                        cell.fill = azul_fondo
+                        cell.font = azul_fuente
+                
+                # Aplicar formato condicional a la fila de diferencias
+                elif "Diferencia de mi tarifa" in str(hotel_name):
+                    for cell in row[2:]:  # Desde la tercera columna (fechas)
+                        if cell.value:
+                            try:
+                                # Convertir a float para verificar si es negativo
+                                diff_value = float(str(cell.value).replace(',', '.'))
+                                if diff_value < 0:
+                                    cell.font = verde_fuente
+                                elif diff_value > 0:
+                                    cell.font = rojo_fuente
+                            except (ValueError, TypeError):
+                                pass
+            
+            # Ajustar ancho de columnas
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = get_column_letter(column[0].column)
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = min(max_length + 2, 50)
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+        
         with open('temp_excel_download.xlsx', 'rb') as f:
             excel_bytes = f.read()
         os.remove('temp_excel_download.xlsx')

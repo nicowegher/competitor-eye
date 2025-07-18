@@ -414,7 +414,22 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                 else:  # Fechas y precios
                     cell.alignment = Alignment(horizontal='right', vertical='center')
         
-        # 7. GUARDAR EL ARCHIVO CON FORMATO APLICADO
+        # 7. AGREGAR PIE DE PÁGINA
+        # Agregar fila vacía después de los datos
+        ws.insert_rows(ws.max_row + 1)
+        
+        # Agregar fila de pie de página
+        pie_fila = ws.max_row + 1
+        pie_cell = ws.cell(row=pie_fila, column=1, value="Con tecnología de www.HotelRateShopper.com")
+        pie_cell.font = Font(name='Calibri', size=10, bold=True, color='FFFFFF')
+        pie_cell.alignment = Alignment(horizontal='left', vertical='center')
+        
+        # Pintar fondo azul en toda la fila del pie de página
+        for col_idx in range(1, len(df_excel.columns) + 1):
+            cell = ws.cell(row=pie_fila, column=col_idx)
+            cell.fill = titulo_fondo  # Mismo fondo azul que el título
+        
+        # 8. GUARDAR EL ARCHIVO CON FORMATO APLICADO
         wb.save('temp_excel_upload.xlsx')
         
         with open('temp_excel_upload.xlsx', 'rb') as f:
@@ -895,7 +910,22 @@ def descargar_excel():
                 else:  # Fechas y precios
                     cell.alignment = Alignment(horizontal='right', vertical='center')
         
-        # 7. GUARDAR EL ARCHIVO CON FORMATO APLICADO
+        # 7. AGREGAR PIE DE PÁGINA
+        # Agregar fila vacía después de los datos
+        ws.insert_rows(ws.max_row + 1)
+        
+        # Agregar fila de pie de página
+        pie_fila = ws.max_row + 1
+        pie_cell = ws.cell(row=pie_fila, column=1, value="Con tecnología de www.HotelRateShopper.com")
+        pie_cell.font = Font(name='Calibri', size=10, bold=True, color='FFFFFF')
+        pie_cell.alignment = Alignment(horizontal='left', vertical='center')
+        
+        # Pintar fondo azul en toda la fila del pie de página
+        for col_idx in range(1, len(df.columns) + 1):
+            cell = ws.cell(row=pie_fila, column=col_idx)
+            cell.fill = titulo_fondo  # Mismo fondo azul que el título
+        
+        # 8. GUARDAR EL ARCHIVO CON FORMATO APLICADO
         wb.save('temp_excel_download.xlsx')
         
         with open('temp_excel_download.xlsx', 'rb') as f:

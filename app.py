@@ -18,7 +18,7 @@ from mailersend import emails
 from time import sleep
 import mercadopago
 import time
-from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import openpyxl
 
@@ -269,8 +269,12 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         set_name_clean = limpiar_nombre(setName) if setName else "scraping"
         if not report_id:
             report_id = f"{set_name_clean}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        csv_blob_name = f"reports/{report_id}.csv"
-        excel_blob_name = f"reports/{report_id}.xlsx"
+        
+        # Generar nombres de archivos con formato HotelRateShopper_YYMMDD_NombreSetCompetitivo
+        fecha_formato = datetime.now().strftime('%y%m%d')
+        nombre_archivo = f"HotelRateShopper_{fecha_formato}_{set_name_clean}"
+        csv_blob_name = f"reports/{nombre_archivo}.csv"
+        excel_blob_name = f"reports/{nombre_archivo}.xlsx"
         
         logger.info(f"[Scraper] Generando archivos CSV y Excel para report_id: {report_id}")
         
@@ -288,65 +292,127 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         df_excel = pd.DataFrame(result)
         df_excel = df_excel.reindex(columns=column_order)
         
-        # Convertir valores numéricos a string con coma como separador decimal (solo para Excel)
+        # Limpiar nombres de hoteles (eliminar prefijo Ar/)
+        def limpiar_nombre_hotel(nombre):
+            if nombre and isinstance(nombre, str):
+                return nombre.replace('Ar/', '').replace('ar/', '')
+            return nombre
+        
+        # Aplicar limpieza a nombres de hoteles
+        df_excel['Hotel Name'] = df_excel['Hotel Name'].apply(limpiar_nombre_hotel)
+        
+        # Convertir valores numéricos a formato de moneda (sin símbolo)
         for col in df_excel.columns:
             if col not in ["Hotel Name", "URL"]:  # Solo columnas de fechas
-                df_excel[col] = df_excel[col].apply(lambda x: str(x).replace('.', ',') if pd.notna(x) and x != '' else '')
+                df_excel[col] = df_excel[col].apply(lambda x: f"{float(x):.2f}" if pd.notna(x) and x != '' and str(x).replace('.', '').replace(',', '').isdigit() else x)
         
-        with pd.ExcelWriter('temp_excel_upload.xlsx', engine='openpyxl') as writer:
-            df_excel.to_excel(writer, sheet_name='Tarifas', index=False)
-            
-            # Obtener el workbook y worksheet para aplicar formato
-            workbook = writer.book
-            worksheet = writer.sheets['Tarifas']
-            
-            # Definir colores
-            azul_fondo = PatternFill(start_color='cfe2f3', end_color='cfe2f3', fill_type='solid')
-            azul_fuente = Font(color='0000ff')
-            verde_fuente = Font(color='00ff00')
-            rojo_fuente = Font(color='ff0000')
-            
-            # Aplicar formato a filas específicas
-            for row_idx, row in enumerate(worksheet.iter_rows(min_row=2, max_row=worksheet.max_row), start=2):
-                # Obtener el valor de la primera columna para identificar el tipo de fila
-                hotel_name_cell = row[0]
-                hotel_name = hotel_name_cell.value if hotel_name_cell.value else ""
+        # Guardar Excel con pie de página y ajuste de columnas
+        from openpyxl import load_workbook
+        df_excel.to_excel('temp_excel_upload.xlsx', sheet_name='Tarifas', index=False)
+        wb = load_workbook('temp_excel_upload.xlsx')
+        ws = wb['Tarifas']
+        # --- Formato profesional (colores, título, encabezados, etc) ---
+        # Definir colores de la marca
+        titulo_fondo = PatternFill(start_color='002A80', end_color='002A80', fill_type='solid')
+        titulo_fuente = Font(name='Calibri', size=16, bold=True, color='FFFFFF')
+        encabezado_fondo = PatternFill(start_color='002A80', end_color='002A80', fill_type='solid')
+        encabezado_fuente = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+        hotel_principal_fondo = PatternFill(start_color='F0FAFB', end_color='F0FAFB', fill_type='solid')
+        hotel_principal_fuente = Font(name='Calibri', size=10, bold=True, color='46B1DE')
+        competidor_fuente = Font(name='Calibri', size=10, color='000000')
+        metricas_fondo = PatternFill(start_color='F0FAFB', end_color='F0FAFB', fill_type='solid')
+        metricas_fuente = Font(name='Calibri', size=10, bold=True, color='000000')
+        verde_fuente = Font(name='Calibri', size=10, color='28A745')
+        rojo_fuente = Font(name='Calibri', size=10, color='DC3545')
+        borde_gris = Border(
+            left=Side(style='thin', color='D3D3D3'),
+            right=Side(style='thin', color='D3D3D3'),
+            top=Side(style='thin', color='D3D3D3'),
+            bottom=Side(style='thin', color='D3D3D3')
+        )
+        
+        # 1. INSERTAR TÍTULO (Fila 1)
+        ws.insert_rows(1)
+        titulo_cell = ws['A1']
+        titulo_cell.value = "Hotel Rate Shopper"
+        titulo_cell.fill = titulo_fondo
+        titulo_cell.font = titulo_fuente
+        titulo_cell.alignment = Alignment(horizontal='left', vertical='center')
+        
+        # Combinar celdas del título
+        ultima_columna = get_column_letter(len(df_excel.columns))
+        ws.merge_cells(f'A1:{ultima_columna}1')
+        
+        # Ajustar altura de la fila del título
+        ws.row_dimensions[1].height = 30
+        
+        # 2. ESCRIBIR DATOS (empezando desde fila 3)
+        for idx, row in enumerate(df_excel.itertuples(), start=3):
+            for col_idx, value in enumerate(row[1:], start=1):
+                cell = ws.cell(row=idx, column=col_idx, value=value)
+                cell.border = borde_gris
                 
-                # Aplicar formato azul a filas específicas
-                if (row_idx == 2 or  # Fila del hotel principal
-                    "Tarifa promedio de competidores" in str(hotel_name) or
-                    "Disponibilidad de la oferta" in str(hotel_name)):
-                    
-                    for cell in row:
-                        cell.fill = azul_fondo
-                        cell.font = azul_fuente
+                # Aplicar formato según el tipo de fila
+                hotel_name = row[1] if len(row) > 1 else ""
                 
-                # Aplicar formato condicional a la fila de diferencias
+                if idx == 3:  # Hotel principal
+                    cell.fill = hotel_principal_fondo
+                    cell.font = hotel_principal_fuente
+                elif "Tarifa promedio de competidores" in str(hotel_name) or "Disponibilidad de la oferta" in str(hotel_name):
+                    cell.fill = metricas_fondo
+                    cell.font = metricas_fuente
                 elif "Diferencia de mi tarifa" in str(hotel_name):
-                    for cell in row[2:]:  # Desde la tercera columna (fechas)
-                        if cell.value:
-                            try:
-                                # Convertir a float para verificar si es negativo
-                                diff_value = float(str(cell.value).replace(',', '.'))
-                                if diff_value < 0:
-                                    cell.font = verde_fuente
-                                elif diff_value > 0:
-                                    cell.font = rojo_fuente
-                            except (ValueError, TypeError):
-                                pass
+                    cell.fill = metricas_fondo
+                    cell.font = metricas_fuente
+                    # Formato condicional para diferencias
+                    if col_idx > 2 and value and str(value).replace('.', '').replace(',', '').replace('-', '').isdigit():
+                        try:
+                            diff_value = float(str(value).replace(',', '.'))
+                            if diff_value < 0:
+                                cell.font = verde_fuente
+                            elif diff_value > 0:
+                                cell.font = rojo_fuente
+                        except (ValueError, TypeError):
+                            pass
+                else:  # Competidores
+                    cell.font = competidor_fuente
+        
+        # 3. FORMATEAR ENCABEZADOS (Fila 2)
+        for col_idx, col_name in enumerate(df_excel.columns, start=1):
+            cell = ws.cell(row=2, column=col_idx, value=col_name)
+            cell.fill = encabezado_fondo
+            cell.font = encabezado_fuente
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = borde_gris
             
-            # Ajustar ancho de columnas
-            for column in worksheet.columns:
-                max_length = 0
-                column_letter = get_column_letter(column[0].column)
-                for cell in column:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = min(max_length + 2, 50)
-                worksheet.column_dimensions[column_letter].width = adjusted_width
+            # Borde inferior blanco para encabezados
+            cell.border = Border(
+                left=Side(style='thin', color='D3D3D3'),
+                right=Side(style='thin', color='D3D3D3'),
+                top=Side(style='thin', color='D3D3D3'),
+                bottom=Side(style='thick', color='FFFFFF')
+            )
+        
+        # 4. AJUSTAR ANCHO DE COLUMNAS
+        for col_idx, col_name in enumerate(df_excel.columns, start=1):
+            column_letter = get_column_letter(col_idx)
+            if col_name == "Hotel Name":
+                ws.column_dimensions[column_letter].width = 25
+            elif col_name == "URL":
+                ws.column_dimensions[column_letter].width = 50
+            else:
+                ws.column_dimensions[column_letter].width = 15
+        
+        # 5. CONGELAR PANELES (Título y encabezados)
+        ws.freeze_panes = 'A3'
+        
+        # 6. ALINEACIÓN DE TEXTO
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            for col_idx, cell in enumerate(row, start=1):
+                if col_idx <= 2:  # Hotel Name y URL
+                    cell.alignment = Alignment(horizontal='left', vertical='center')
+                else:  # Fechas y precios
+                    cell.alignment = Alignment(horizontal='right', vertical='center')
         
         with open('temp_excel_upload.xlsx', 'rb') as f:
             excel_blob = bucket.blob(excel_blob_name)
@@ -668,11 +734,15 @@ def descargar_csv():
         df.to_csv(csv_buffer, index=False, decimal=',')
         csv_buffer.seek(0)
         
+        # Generar nombre de archivo con formato HotelRateShopper_YYMMDD_NombreSetCompetitivo
+        fecha_formato = datetime.now().strftime('%y%m%d')
+        nombre_archivo = f"HotelRateShopper_{fecha_formato}_{report_data.get('setName', 'Reporte')}.csv"
+        
         return send_file(
             io.BytesIO(csv_buffer.getvalue().encode('utf-8')),
             mimetype='text/csv',
-                        as_attachment=True, 
-            download_name=f"tarifas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            as_attachment=True, 
+            download_name=nombre_archivo
         )
         
     except Exception as e:
@@ -700,74 +770,140 @@ def descargar_excel():
         # Crear Excel
         df = pd.DataFrame(result)
         
-        # Convertir valores numéricos a string con coma como separador decimal (solo para Excel)
+        # Limpiar nombres de hoteles (eliminar prefijo Ar/)
+        def limpiar_nombre_hotel(nombre):
+            if nombre and isinstance(nombre, str):
+                return nombre.replace('Ar/', '').replace('ar/', '')
+            return nombre
+        
+        # Aplicar limpieza a nombres de hoteles
+        df['Hotel Name'] = df['Hotel Name'].apply(limpiar_nombre_hotel)
+        
+        # Convertir valores numéricos a formato de moneda (sin símbolo)
         for col in df.columns:
             if col not in ["Hotel Name", "URL"]:  # Solo columnas de fechas
-                df[col] = df[col].apply(lambda x: str(x).replace('.', ',') if pd.notna(x) and x != '' else '')
+                df[col] = df[col].apply(lambda x: f"{float(x):.2f}" if pd.notna(x) and x != '' and str(x).replace('.', '').replace(',', '').isdigit() else x)
         
-        with pd.ExcelWriter('temp_excel_download.xlsx', engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name='Tarifas', index=False)
-            
-            # Obtener el workbook y worksheet para aplicar formato
-            workbook = writer.book
-            worksheet = writer.sheets['Tarifas']
-            
-            # Definir colores
-            azul_fondo = PatternFill(start_color='cfe2f3', end_color='cfe2f3', fill_type='solid')
-            azul_fuente = Font(color='0000ff')
-            verde_fuente = Font(color='00ff00')
-            rojo_fuente = Font(color='ff0000')
-            
-            # Aplicar formato a filas específicas
-            for row_idx, row in enumerate(worksheet.iter_rows(min_row=2, max_row=worksheet.max_row), start=2):
-                # Obtener el valor de la primera columna para identificar el tipo de fila
-                hotel_name_cell = row[0]
-                hotel_name = hotel_name_cell.value if hotel_name_cell.value else ""
+        # Guardar Excel con pie de página y ajuste de columnas (descarga)
+        from openpyxl import load_workbook
+        df.to_excel('temp_excel_download.xlsx', sheet_name='Tarifas', index=False)
+        wb = load_workbook('temp_excel_download.xlsx')
+        ws = wb['Tarifas']
+        # --- Formato profesional (colores, título, encabezados, etc) ---
+        # Definir colores de la marca
+        titulo_fondo = PatternFill(start_color='002A80', end_color='002A80', fill_type='solid')
+        titulo_fuente = Font(name='Calibri', size=16, bold=True, color='FFFFFF')
+        encabezado_fondo = PatternFill(start_color='002A80', end_color='002A80', fill_type='solid')
+        encabezado_fuente = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+        hotel_principal_fondo = PatternFill(start_color='F0FAFB', end_color='F0FAFB', fill_type='solid')
+        hotel_principal_fuente = Font(name='Calibri', size=10, bold=True, color='46B1DE')
+        competidor_fuente = Font(name='Calibri', size=10, color='000000')
+        metricas_fondo = PatternFill(start_color='F0FAFB', end_color='F0FAFB', fill_type='solid')
+        metricas_fuente = Font(name='Calibri', size=10, bold=True, color='000000')
+        verde_fuente = Font(name='Calibri', size=10, color='28A745')
+        rojo_fuente = Font(name='Calibri', size=10, color='DC3545')
+        borde_gris = Border(
+            left=Side(style='thin', color='D3D3D3'),
+            right=Side(style='thin', color='D3D3D3'),
+            top=Side(style='thin', color='D3D3D3'),
+            bottom=Side(style='thin', color='D3D3D3')
+        )
+        
+        # 1. INSERTAR TÍTULO (Fila 1)
+        ws.insert_rows(1)
+        titulo_cell = ws['A1']
+        titulo_cell.value = "Hotel Rate Shopper"
+        titulo_cell.fill = titulo_fondo
+        titulo_cell.font = titulo_fuente
+        titulo_cell.alignment = Alignment(horizontal='left', vertical='center')
+        
+        # Combinar celdas del título
+        ultima_columna = get_column_letter(len(df.columns))
+        ws.merge_cells(f'A1:{ultima_columna}1')
+        
+        # Ajustar altura de la fila del título
+        ws.row_dimensions[1].height = 30
+        
+        # 2. ESCRIBIR DATOS (empezando desde fila 3)
+        for idx, row in enumerate(df.itertuples(), start=3):
+            for col_idx, value in enumerate(row[1:], start=1):
+                cell = ws.cell(row=idx, column=col_idx, value=value)
+                cell.border = borde_gris
                 
-                # Aplicar formato azul a filas específicas
-                if (row_idx == 2 or  # Fila del hotel principal
-                    "Tarifa promedio de competidores" in str(hotel_name) or
-                    "Disponibilidad de la oferta" in str(hotel_name)):
-                    
-                    for cell in row:
-                        cell.fill = azul_fondo
-                        cell.font = azul_fuente
+                # Aplicar formato según el tipo de fila
+                hotel_name = row[1] if len(row) > 1 else ""
                 
-                # Aplicar formato condicional a la fila de diferencias
+                if idx == 3:  # Hotel principal
+                    cell.fill = hotel_principal_fondo
+                    cell.font = hotel_principal_fuente
+                elif "Tarifa promedio de competidores" in str(hotel_name) or "Disponibilidad de la oferta" in str(hotel_name):
+                    cell.fill = metricas_fondo
+                    cell.font = metricas_fuente
                 elif "Diferencia de mi tarifa" in str(hotel_name):
-                    for cell in row[2:]:  # Desde la tercera columna (fechas)
-                        if cell.value:
-                            try:
-                                # Convertir a float para verificar si es negativo
-                                diff_value = float(str(cell.value).replace(',', '.'))
-                                if diff_value < 0:
-                                    cell.font = verde_fuente
-                                elif diff_value > 0:
-                                    cell.font = rojo_fuente
-                            except (ValueError, TypeError):
-                                pass
+                    cell.fill = metricas_fondo
+                    cell.font = metricas_fuente
+                    # Formato condicional para diferencias
+                    if col_idx > 2 and value and str(value).replace('.', '').replace(',', '').replace('-', '').isdigit():
+                        try:
+                            diff_value = float(str(value).replace(',', '.'))
+                            if diff_value < 0:
+                                cell.font = verde_fuente
+                            elif diff_value > 0:
+                                cell.font = rojo_fuente
+                        except (ValueError, TypeError):
+                            pass
+                else:  # Competidores
+                    cell.font = competidor_fuente
+        
+        # 3. FORMATEAR ENCABEZADOS (Fila 2)
+        for col_idx, col_name in enumerate(df.columns, start=1):
+            cell = ws.cell(row=2, column=col_idx, value=col_name)
+            cell.fill = encabezado_fondo
+            cell.font = encabezado_fuente
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = borde_gris
             
-            # Ajustar ancho de columnas
-            for column in worksheet.columns:
-                max_length = 0
-                column_letter = get_column_letter(column[0].column)
-                for cell in column:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = min(max_length + 2, 50)
-                worksheet.column_dimensions[column_letter].width = adjusted_width
+            # Borde inferior blanco para encabezados
+            cell.border = Border(
+                left=Side(style='thin', color='D3D3D3'),
+                right=Side(style='thin', color='D3D3D3'),
+                top=Side(style='thin', color='D3D3D3'),
+                bottom=Side(style='thick', color='FFFFFF')
+            )
+        
+        # 4. AJUSTAR ANCHO DE COLUMNAS
+        for col_idx, col_name in enumerate(df.columns, start=1):
+            column_letter = get_column_letter(col_idx)
+            if col_name == "Hotel Name":
+                ws.column_dimensions[column_letter].width = 25
+            elif col_name == "URL":
+                ws.column_dimensions[column_letter].width = 50
+            else:
+                ws.column_dimensions[column_letter].width = 15
+        
+        # 5. CONGELAR PANELES (Título y encabezados)
+        ws.freeze_panes = 'A3'
+        
+        # 6. ALINEACIÓN DE TEXTO
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            for col_idx, cell in enumerate(row, start=1):
+                if col_idx <= 2:  # Hotel Name y URL
+                    cell.alignment = Alignment(horizontal='left', vertical='center')
+                else:  # Fechas y precios
+                    cell.alignment = Alignment(horizontal='right', vertical='center')
         
         with open('temp_excel_download.xlsx', 'rb') as f:
             excel_bytes = f.read()
         os.remove('temp_excel_download.xlsx')
+        # Generar nombre de archivo con formato HotelRateShopper_YYMMDD_NombreSetCompetitivo
+        fecha_formato = datetime.now().strftime('%y%m%d')
+        nombre_archivo = f"HotelRateShopper_{fecha_formato}_{report_data.get('setName', 'Reporte')}.xlsx"
+        
         return send_file(
             io.BytesIO(excel_bytes),
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
-            download_name=f"tarifas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            download_name=nombre_archivo
         )
         
     except Exception as e:

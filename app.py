@@ -20,6 +20,7 @@ import mercadopago
 import time
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
+import openpyxl
 
 # --- CONFIGURACIÓN DE LOGGING ---
 logging.basicConfig(level=logging.INFO)
@@ -357,7 +358,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         
         # --- GUARDAR EN FIRESTORE ---
         logger.info(f"[Scraper] PREPARANDO para guardar reporte en Firestore con ID: {report_id}")
-        now = firestore.SERVER_TIMESTAMP
+        now = datetime.now()
 
         # Generar URLs firmadas para 7 días (máximo permitido por Google Cloud Storage)
         csv_signed_url = csv_blob.generate_signed_url(
@@ -479,7 +480,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         
         # Actualizar el documento con status failed y completedAt
         try:
-            now = firestore.SERVER_TIMESTAMP
+            now = datetime.now()
             logger.info(f"[Scraper] Intentando actualizar documento a failed en Firestore (ID: {report_id})...")
             db.collection("scraping_reports").document(report_id).update({
                 "status": "failed",
@@ -800,36 +801,88 @@ def obtener_datos_externos():
 @app.route('/execute-scheduled-tasks', methods=['POST'])
 def execute_scheduled_tasks():
     try:
-        data = request.get_json()
-        uid = data.get('uid')
+        # Validar token de seguridad (opcional pero recomendado)
+        token = request.args.get('token')
+        expected_token = os.environ.get('SCHEDULER_TOKEN', 'default_token')
         
-        if not uid:
-            return jsonify({"error": "UID requerido"}), 400
+        if token != expected_token:
+            logger.warning(f"[execute-scheduled-tasks] Token inválido recibido: {token}")
+            return jsonify({"error": "Token inválido"}), 401
         
-        # Obtener grupos del usuario
-        grupos_ref = db.collection('users').document(uid).collection('grupos')
-        grupos = grupos_ref.stream()
+        logger.info("[execute-scheduled-tasks] Iniciando ejecución de tareas programadas")
         
-        for grupo in grupos:
-            grupo_data = grupo.to_dict()
-            if grupo_data.get('schedule_enabled', False):
-                hotel_urls = [grupo_data.get('hotel_principal')] + grupo_data.get('competidores', [])
-                report_doc = {
-                    'userId': uid,
-                    'setId': grupo_data.get('id'),
-                    'setName': grupo_data.get('name'),
-                    'hotel_base_urls': hotel_urls,
-                    'days': grupo_data.get('days', 7),
-                    'nights': grupo_data.get('nights', 1),
-                    'currency': grupo_data.get('currency', 'USD'),
-                    'userEmail': grupo_data.get('userEmail', None),
-                    'status': 'queued',
-                    'createdAt': datetime.now(),
-                }
-                db.collection('scraping_reports').add(report_doc)
-        return jsonify({"success": True, "message": "Tareas programadas encoladas"})
+        # Obtener todos los usuarios que tienen grupos con schedule_enabled = True
+        users_ref = db.collection('users')
+        users = users_ref.stream()
+        
+        total_tasks_created = 0
+        
+        for user_doc in users:
+            uid = user_doc.id
+            user_data = user_doc.to_dict()
+            
+            # Obtener grupos del usuario
+            grupos_ref = db.collection('users').document(uid).collection('grupos')
+            grupos = grupos_ref.stream()
+            
+            for grupo in grupos:
+                grupo_data = grupo.to_dict()
+                grupo_id = grupo.id
+                
+                # Verificar si el grupo tiene schedule habilitado
+                if grupo_data.get('schedule_enabled', False):
+                    logger.info(f"[execute-scheduled-tasks] Procesando grupo {grupo_id} del usuario {uid}")
+                    
+                    # Obtener URLs de hoteles
+                    hotel_principal = grupo_data.get('hotel_principal')
+                    competidores = grupo_data.get('competidores', [])
+                    
+                    if not hotel_principal:
+                        logger.warning(f"[execute-scheduled-tasks] Grupo {grupo_id} no tiene hotel principal")
+                        continue
+                    
+                    # Construir lista de URLs
+                    hotel_urls = [hotel_principal]
+                    if competidores:
+                        if isinstance(competidores, list):
+                            hotel_urls.extend(competidores)
+                        elif isinstance(competidores, str):
+                            hotel_urls.append(competidores)
+                    
+                    # Crear documento de reporte
+                    report_doc = {
+                        'userId': uid,
+                        'setId': grupo_id,
+                        'setName': grupo_data.get('name', 'Grupo Programado'),
+                        'ownHotelUrl': hotel_principal,
+                        'competitorHotelUrls': competidores,
+                        'hotel_base_urls': hotel_urls,
+                        'days': grupo_data.get('days', 7),
+                        'nights': grupo_data.get('nights', 1),
+                        'currency': grupo_data.get('currency', 'USD'),
+                        'userEmail': user_data.get('email'),
+                        'status': 'queued',
+                        'createdAt': datetime.now(),
+                        'scheduled_task': True
+                    }
+                    
+                    # Guardar en Firestore
+                    try:
+                        db.collection('scraping_reports').add(report_doc)
+                        total_tasks_created += 1
+                        logger.info(f"[execute-scheduled-tasks] ✅ Tarea creada para grupo {grupo_id} del usuario {uid}")
+                    except Exception as e:
+                        logger.error(f"[execute-scheduled-tasks] ❌ Error creando tarea para grupo {grupo_id}: {e}")
+        
+        logger.info(f"[execute-scheduled-tasks] ✅ Proceso completado. {total_tasks_created} tareas creadas")
+        return jsonify({
+            "success": True, 
+            "message": f"Tareas programadas encoladas: {total_tasks_created}",
+            "tasks_created": total_tasks_created
+        })
         
     except Exception as e:
+        logger.error(f"[execute-scheduled-tasks] ❌ Error general: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/init-user', methods=['POST'])
@@ -1183,7 +1236,7 @@ def debug_update_task():
         
         # Intentar actualizar el documento
         try:
-            now = firestore.SERVER_TIMESTAMP
+            now = datetime.now()
             update_data = {
                 "status": new_status,
                 "completedAt": now,
@@ -1226,6 +1279,60 @@ def debug_update_task():
     except Exception as e:
         logger.error(f"[DEBUG] ❌ Error general en debug-update-task: {e}")
         return jsonify({"success": False, "error": f"Error general: {str(e)}"}), 500
+
+@app.route('/test-scheduled-tasks', methods=['GET'])
+def test_scheduled_tasks():
+    """
+    Endpoint de prueba para verificar el estado del sistema de tareas programadas
+    """
+    try:
+        logger.info("[test-scheduled-tasks] Verificando estado del sistema")
+        
+        # Contar usuarios con grupos programados
+        users_with_scheduled_groups = 0
+        total_scheduled_groups = 0
+        
+        users_ref = db.collection('users')
+        users = users_ref.stream()
+        
+        for user_doc in users:
+            uid = user_doc.id
+            user_data = user_doc.to_dict()
+            
+            # Obtener grupos del usuario
+            grupos_ref = db.collection('users').document(uid).collection('grupos')
+            grupos = grupos_ref.stream()
+            
+            user_has_scheduled = False
+            for grupo in grupos:
+                grupo_data = grupo.to_dict()
+                if grupo_data.get('schedule_enabled', False):
+                    user_has_scheduled = True
+                    total_scheduled_groups += 1
+            
+            if user_has_scheduled:
+                users_with_scheduled_groups += 1
+        
+        # Contar tareas en cola
+        queued_tasks = list(db.collection('scraping_reports').where('status', '==', 'queued').stream())
+        pending_tasks = list(db.collection('scraping_reports').where('status', '==', 'pending').stream())
+        
+        return jsonify({
+            "success": True,
+            "system_status": {
+                "users_with_scheduled_groups": users_with_scheduled_groups,
+                "total_scheduled_groups": total_scheduled_groups,
+                "queued_tasks": len(queued_tasks),
+                "pending_tasks": len(pending_tasks),
+                "scraper_running": scraper_status["is_running"],
+                "scraper_en_proceso": scraper_en_proceso.is_set()
+            },
+            "message": "Estado del sistema verificado"
+        })
+        
+    except Exception as e:
+        logger.error(f"[test-scheduled-tasks] ❌ Error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 # Lanzar el procesador de la cola SIEMPRE, no solo en modo script
 import threading

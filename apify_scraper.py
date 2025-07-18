@@ -98,13 +98,13 @@ def scrape_booking_data(hotel_base_urls, days=2, nights=1, currency="USD"):
     logger.info(f"Iniciando scraping para {len(hotel_base_urls)} hoteles por {days} días, {nights} noches, moneda {currency}")
     client = ApifyClient(APIFY_API_TOKEN)
     today = datetime.now()
-    # Generar rangos de fechas con la cantidad de noches deseada
+    # Generar rangos de fechas con la cantidad de noches deseada (incluyendo hoy)
     date_ranges = [
         (
             (today + timedelta(days=i)).strftime("%Y-%m-%d"),
             (today + timedelta(days=i+nights)).strftime("%Y-%m-%d")
         )
-        for i in range(1, days+1)
+        for i in range(0, days)  # Cambiado de range(1, days+1) a range(0, days) para incluir hoy
     ]
     # Obtener nombres de hoteles
     url_to_name = {}

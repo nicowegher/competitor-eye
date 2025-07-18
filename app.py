@@ -414,6 +414,9 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                 else:  # Fechas y precios
                     cell.alignment = Alignment(horizontal='right', vertical='center')
         
+        # 7. GUARDAR EL ARCHIVO CON FORMATO APLICADO
+        wb.save('temp_excel_upload.xlsx')
+        
         with open('temp_excel_upload.xlsx', 'rb') as f:
             excel_blob = bucket.blob(excel_blob_name)
             # Añadir metadatos personalizados con userId para las reglas de seguridad
@@ -891,6 +894,9 @@ def descargar_excel():
                     cell.alignment = Alignment(horizontal='left', vertical='center')
                 else:  # Fechas y precios
                     cell.alignment = Alignment(horizontal='right', vertical='center')
+        
+        # 7. GUARDAR EL ARCHIVO CON FORMATO APLICADO
+        wb.save('temp_excel_download.xlsx')
         
         with open('temp_excel_download.xlsx', 'rb') as f:
             excel_bytes = f.read()

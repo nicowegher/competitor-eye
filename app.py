@@ -301,10 +301,10 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         # Aplicar limpieza a nombres de hoteles
         df_excel['Hotel Name'] = df_excel['Hotel Name'].apply(limpiar_nombre_hotel)
         
-        # Convertir valores numéricos a formato de moneda (sin símbolo)
+        # Convertir valores numéricos a formato de moneda con coma como separador decimal
         for col in df_excel.columns:
             if col not in ["Hotel Name", "URL"]:  # Solo columnas de fechas
-                df_excel[col] = df_excel[col].apply(lambda x: f"{float(x):.2f}" if pd.notna(x) and x != '' and str(x).replace('.', '').replace(',', '').isdigit() else x)
+                df_excel[col] = df_excel[col].apply(lambda x: f"{float(x):.2f}".replace('.', ',') if pd.notna(x) and x != '' and str(x).replace('.', '').replace(',', '').isdigit() else x)
         
         # Guardar Excel con pie de página y ajuste de columnas
         from openpyxl import load_workbook
@@ -782,10 +782,10 @@ def descargar_excel():
         # Aplicar limpieza a nombres de hoteles
         df['Hotel Name'] = df['Hotel Name'].apply(limpiar_nombre_hotel)
         
-        # Convertir valores numéricos a formato de moneda (sin símbolo)
+        # Convertir valores numéricos a formato de moneda con coma como separador decimal
         for col in df.columns:
             if col not in ["Hotel Name", "URL"]:  # Solo columnas de fechas
-                df[col] = df[col].apply(lambda x: f"{float(x):.2f}" if pd.notna(x) and x != '' and str(x).replace('.', '').replace(',', '').isdigit() else x)
+                df[col] = df[col].apply(lambda x: f"{float(x):.2f}".replace('.', ',') if pd.notna(x) and x != '' and str(x).replace('.', '').replace(',', '').isdigit() else x)
         
         # Guardar Excel con pie de página y ajuste de columnas (descarga)
         from openpyxl import load_workbook

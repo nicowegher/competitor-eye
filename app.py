@@ -14,7 +14,7 @@ import json
 from google.oauth2 import service_account
 import threading
 import logging
-from mailersend import emails
+from mailersend import Email
 from time import sleep
 import mercadopago
 import time
@@ -490,7 +490,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         try:
             if userEmail:
                 logger.info(f"[Scraper] Enviando correo a: {userEmail}")
-                mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
+                mailer = Email(os.environ.get('MAILERSEND_API_KEY'))
                 mail_body = {
                     "from": {
                         "email": os.environ.get('MAILERSEND_SENDER_EMAIL', 'noreply@hotelrateshopper.com'),
@@ -1285,8 +1285,8 @@ def mercado_pago_webhook():
                                     
                                     # Enviar email de confirmación
                                     try:
-                                        from mailersend import emails
-                                        mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
+                                        from mailersend import Email
+                                        mailer = Email(os.environ.get('MAILERSEND_API_KEY'))
                                         
                                         mail_body = {
                                             "from": {
@@ -1323,8 +1323,8 @@ def mercado_pago_webhook():
                                 email = "_".join(parts[2:])
                                 
                                 try:
-                                    from mailersend import emails
-                                    mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
+                                    from mailersend import Email
+                                    mailer = Email(os.environ.get('MAILERSEND_API_KEY'))
                                     
                                     mail_body = {
                                         "from": {
@@ -1392,8 +1392,8 @@ def mercado_pago_webhook():
                             
                             # Enviar email de confirmación
                             try:
-                                from mailersend import emails
-                                mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
+                                from mailersend import Email
+                                mailer = Email(os.environ.get('MAILERSEND_API_KEY'))
                                 
                                 mail_body = {
                                     "from": {
@@ -1430,8 +1430,8 @@ def mercado_pago_webhook():
                         payer_email = preapproval_data.get("payer_email", "")
                         
                         try:
-                            from mailersend import emails
-                            mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
+                            from mailersend import Email
+                            mailer = Email(os.environ.get('MAILERSEND_API_KEY'))
                             
                             mail_body = {
                                 "from": {

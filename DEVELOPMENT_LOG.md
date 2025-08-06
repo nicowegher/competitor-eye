@@ -71,4 +71,57 @@ Se creó `test_user_subscription.py` para:
 ### Notas Técnicas
 - Los logs muestran actividad de scraping de Apify, no relacionados con el problema
 - El problema era específico del webhook, no de la integración general con Mercado Pago
-- La solución es retrocompatible y no afecta el manejo de pagos únicos existentes 
+- La solución es retrocompatible y no afecta el manejo de pagos únicos existentes
+
+## 2025-08-06 - Corrección de Error de Importación de Mailersend en Render
+
+### Problema Identificado
+Error de deployment en Render debido a incompatibilidad de versiones de la librería mailersend:
+
+```
+ImportError: cannot import name 'emails' from 'mailersend'
+```
+
+**Detalles del problema:**
+- Render instalaba mailersend versión 2.0.0
+- El código usaba la API antigua: `from mailersend import emails`
+- La nueva versión usa: `from mailersend import Email`
+
+### Solución Implementada
+
+#### 1. Actualización de Importaciones
+Se corrigieron todas las importaciones de mailersend en `app.py`:
+
+```python
+# ANTES (versión antigua)
+from mailersend import emails
+mailer = emails.NewEmail(api_key)
+
+# DESPUÉS (versión 2.0.0)
+from mailersend import Email
+mailer = Email(api_key)
+```
+
+#### 2. Archivos Corregidos
+- Línea 17: Importación principal
+- Línea 492: Uso en función `run_scraper_async`
+- Línea 1287: Uso en webhook de Mercado Pago (pagos exitosos)
+- Línea 1325: Uso en webhook de Mercado Pago (pagos rechazados)
+- Línea 1394: Uso en webhook de Mercado Pago (suscripciones exitosas)
+- Línea 1432: Uso en webhook de Mercado Pago (suscripciones rechazadas)
+
+#### 3. Limpieza de Archivos de Test
+Se eliminaron archivos de testing que ya no eran necesarios:
+- `test_user_subscription.py`
+- `test_plan.md`
+- `test_scheduled_tasks.py`
+
+### Verificación
+- ✅ Importación de mailersend funciona correctamente
+- ✅ No quedan referencias a la API antigua
+- ✅ Archivos de test eliminados
+
+### Próximos Pasos
+1. Hacer deploy en Render para verificar que el error esté resuelto
+2. Probar el envío de emails desde la aplicación
+3. Monitorear logs de Render para confirmar funcionamiento correcto 

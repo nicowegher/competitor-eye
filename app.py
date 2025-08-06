@@ -1242,9 +1242,13 @@ def create_subscription_checkout():
 def mercado_pago_webhook():
     try:
         data = request.get_json()
+        logger.info(f"Webhook recibido: {data}")
         
         # Verificar que es una notificación válida de MP
-        if data.get("type") == "payment":
+        notification_type = data.get("type")
+        
+        if notification_type == "payment":
+            # Manejar notificaciones de pagos únicos
             payment_id = data.get("data", {}).get("id")
             
             if payment_id:
@@ -1344,6 +1348,113 @@ def mercado_pago_webhook():
                                     
                                 except Exception as e:
                                     logger.error(f"Error enviando email: {e}")
+        
+        elif notification_type == "preapproval":
+            # Manejar notificaciones de suscripciones (preapproval)
+            preapproval_id = data.get("data", {}).get("id")
+            
+            if preapproval_id:
+                # Obtener información de la suscripción
+                mp = mercadopago.SDK(os.environ.get('MP_ACCESS_TOKEN'))
+                preapproval_info = mp.preapproval().get(preapproval_id)
+                
+                if preapproval_info["status"] == 200:
+                    preapproval_data = preapproval_info["response"]
+                    
+                    # Procesar según el estado de la suscripción
+                    if preapproval_data["status"] == "authorized":
+                        # Suscripción autorizada - actualizar plan del usuario
+                        external_reference = preapproval_data.get("external_reference", "")
+                        payer_email = preapproval_data.get("payer_email", "")
+                        
+                        # Determinar el plan basado en el preapproval_plan_id
+                        plan_id = preapproval_data.get("preapproval_plan_id", "")
+                        plan_mapping = {
+                            "2c93808497c462520197d744586508be": "esencial",
+                            "2c93808497c19ac40197d7445b440a20": "pro", 
+                            "2c93808497d635430197d7445e1c00bc": "market_leader"
+                        }
+                        plan = plan_mapping.get(plan_id, "esencial")
+                        
+                        # Buscar usuario por email o external_reference
+                        users_ref = db.collection('users')
+                        users = users_ref.where('email', '==', payer_email).stream()
+                        
+                        user_found = False
+                        for user in users:
+                            user_ref = db.collection('users').document(user.id)
+                            user_ref.update({
+                                'plan': plan,
+                                'plan_updated_at': datetime.now(),
+                                'subscription_id': preapproval_id,
+                                'subscription_status': preapproval_data["status"]
+                            })
+                            
+                            # Enviar email de confirmación
+                            try:
+                                from mailersend import emails
+                                mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
+                                
+                                mail_body = {
+                                    "from": {
+                                        "email": "noreply@tuapp.com",
+                                        "name": "Tu App"
+                                    },
+                                    "to": [
+                                        {
+                                            "email": payer_email,
+                                            "name": "Usuario"
+                                        }
+                                    ],
+                                    "subject": "Suscripción activada exitosamente",
+                                    "html": f"""
+                                    <h2>¡Suscripción activada!</h2>
+                                    <p>Tu suscripción al plan <strong>{plan}</strong> ha sido activada exitosamente.</p>
+                                    <p>Gracias por tu compra.</p>
+                                    """
+                                }
+                                
+                                mailer.send(mail_body)
+                                
+                            except Exception as e:
+                                logger.error(f"Error enviando email: {e}")
+                            
+                            user_found = True
+                            break
+                        
+                        if not user_found:
+                            logger.warning(f"Usuario no encontrado para email: {payer_email}")
+                    
+                    elif preapproval_data["status"] == "rejected":
+                        # Suscripción rechazada - enviar email de notificación
+                        payer_email = preapproval_data.get("payer_email", "")
+                        
+                        try:
+                            from mailersend import emails
+                            mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
+                            
+                            mail_body = {
+                                "from": {
+                                    "email": "noreply@tuapp.com",
+                                    "name": "Tu App"
+                                },
+                                "to": [
+                                    {
+                                        "email": payer_email,
+                                        "name": "Usuario"
+                                    }
+                                ],
+                                "subject": "Problema con la suscripción",
+                                "html": """
+                                <h2>Problema con la suscripción</h2>
+                                <p>Tu suscripción fue rechazada. Por favor, intenta nuevamente.</p>
+                                """
+                            }
+                            
+                            mailer.send(mail_body)
+                            
+                        except Exception as e:
+                            logger.error(f"Error enviando email: {e}")
         
         return jsonify({"success": True}), 200
         

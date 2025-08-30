@@ -91,20 +91,39 @@ def fetch_price_for_night(client, base_url, hotel_name, checkin, checkout, curre
     
     return (hotel_name, base_url, checkin, None)
 
-def scrape_booking_data(hotel_base_urls, days=2, nights=1, currency="USD"):
+def scrape_booking_data(hotel_base_urls, days=2, nights=1, currency="USD", start_date=None):
     """
     Scraping de Booking.com para múltiples hoteles, días, noches y moneda.
+    
+    Args:
+        hotel_base_urls: Lista de URLs de hoteles
+        days: Número de días a analizar
+        nights: Número de noches por reserva
+        currency: Moneda para los precios
+        start_date: Fecha de inicio en formato "YYYY-MM-DD". Si es None, usa hoy.
     """
     logger.info(f"Iniciando scraping para {len(hotel_base_urls)} hoteles por {days} días, {nights} noches, moneda {currency}")
     client = ApifyClient(APIFY_API_TOKEN)
-    today = datetime.now()
-    # Generar rangos de fechas con la cantidad de noches deseada (incluyendo hoy)
+    
+    # Determinar fecha de inicio
+    if start_date:
+        try:
+            start_datetime = datetime.strptime(start_date, "%Y-%m-%d")
+            logger.info(f"Usando fecha de inicio personalizada: {start_date}")
+        except ValueError:
+            logger.warning(f"Fecha de inicio inválida: {start_date}. Usando fecha actual.")
+            start_datetime = datetime.now()
+    else:
+        start_datetime = datetime.now()
+        logger.info(f"Usando fecha actual como inicio: {start_datetime.strftime('%Y-%m-%d')}")
+    
+    # Generar rangos de fechas con la cantidad de noches deseada
     date_ranges = [
         (
-            (today + timedelta(days=i)).strftime("%Y-%m-%d"),
-            (today + timedelta(days=i+nights)).strftime("%Y-%m-%d")
+            (start_datetime + timedelta(days=i)).strftime("%Y-%m-%d"),
+            (start_datetime + timedelta(days=i+nights)).strftime("%Y-%m-%d")
         )
-        for i in range(0, days)  # Cambiado de range(1, days+1) a range(0, days) para incluir hoy
+        for i in range(0, days)
     ]
     # Obtener nombres de hoteles
     url_to_name = {}

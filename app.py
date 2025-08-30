@@ -14,7 +14,7 @@ import json
 from google.oauth2 import service_account
 import threading
 import logging
-from mailersend import Email
+from mailersend import emails
 from time import sleep
 import mercadopago
 import time
@@ -122,7 +122,7 @@ def get_user_plan(uid):
         return 'free_trial'
 
 # --- FUNCIÓN ASÍNCRONA PARA EL SCRAPER (SIMPLE) ---
-def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, nights=1, currency="USD", report_id=None, userId=None, setId=None):
+def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, nights=1, currency="USD", report_id=None, userId=None, setId=None, start_date=None):
     global scraper_status
     try:
         logger.info(f"[Scraper] INICIO run_scraper_async para reporte: {report_id} | hoteles: {hotel_base_urls}")
@@ -132,8 +132,8 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         
         from apify_scraper import scrape_booking_data
         
-        logger.info(f"[Scraper] Ejecutando scraper para {len(hotel_base_urls)} hoteles por {days} días, {nights} noches, moneda {currency}")
-        result = scrape_booking_data(hotel_base_urls, days, nights, currency)
+        logger.info(f"[Scraper] Ejecutando scraper para {len(hotel_base_urls)} hoteles por {days} días, {nights} noches, moneda {currency}, fecha inicio: {start_date or 'hoy'}")
+        result = scrape_booking_data(hotel_base_urls, days, nights, currency, start_date)
         
         if not result:
             logger.error(f"[Scraper] ERROR: No se obtuvieron datos del scraper. Antes de raise Exception...")
@@ -472,7 +472,8 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             "result": result,
             "days": days,
             "nights": nights,
-            "currency": currency
+            "currency": currency,
+            "start_date": start_date
         }
         
         logger.info(f"[Scraper] ANTES de intentar guardar en Firestore. report_data keys: {list(report_data.keys())}")
@@ -490,61 +491,73 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         try:
             if userEmail:
                 logger.info(f"[Scraper] Enviando correo a: {userEmail}")
-                mailer = Email(os.environ.get('MAILERSEND_API_KEY'))
-                mail_body = {
-                    "from": {
-                        "email": os.environ.get('MAILERSEND_SENDER_EMAIL', 'noreply@hotelrateshopper.com'),
-                        "name": os.environ.get('MAILERSEND_SENDER_NAME', 'Hotel Rate Shopper')
-                    },
-                    "to": [
-                        {
-                            "email": userEmail,
-                            "name": "Usuario"
-                        }
-                    ],
-                    "subject": f"¡Tu informe para '{setName}' está listo!",
-                    "reply_to": [
-                        {
-                            "email": "nicolas.wegher@gmail.com",
-                            "name": "Nicolás Wegher"
-                        }
-                    ],
-                    "html": f"""
+                from mailersend import emails
+                mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
+                
+                # Definir un diccionario vacío para poblar con valores del correo
+                mail_body = {}
+                
+                # Configurar remitente
+                mail_from = {
+                    "email": os.environ.get('MAILERSEND_SENDER_EMAIL', 'noreply@hotelrateshopper.com'),
+                    "name": os.environ.get('MAILERSEND_SENDER_NAME', 'Hotel Rate Shopper')
+                }
+                
+                # Configurar destinatario
+                recipients = [
+                    {
+                        "email": userEmail,
+                        "name": "Usuario"
+                    }
+                ]
+                
+                # Configurar reply-to
+                reply_to = {
+                    "email": "nicolas.wegher@gmail.com",
+                    "name": "Nicolás Wegher"
+                }
+                
+                # Configurar el correo usando los métodos de la librería
+                mailer.set_mail_from(mail_from, mail_body)
+                mailer.set_mail_to(recipients, mail_body)
+                mailer.set_subject(f"¡Tu informe para '{setName}' está listo!", mail_body)
+                mailer.set_reply_to(reply_to, mail_body)
+                mailer.set_html_content(f"""
 <!DOCTYPE html>
-<html lang=\"es\">
+<html lang="es">
   <head>
-    <meta charset=\"UTF-8\">
+    <meta charset="UTF-8">
     <title>¡Tu informe para '{setName}' está listo!</title>
   </head>
-  <body style=\"font-family: Arial, sans-serif; background: #fff; color: #222; margin: 0; padding: 0;\">
-    <div style=\"max-width: 600px; margin: 40px auto; padding: 32px 24px; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);\">
-      <h1 style=\"color: #222; font-size: 2em; margin-bottom: 0.5em;\">¡Tu informe está listo!</h1>
+  <body style="font-family: Arial, sans-serif; background: #fff; color: #222; margin: 0; padding: 0;">
+    <div style="max-width: 600px; margin: 40px auto; padding: 32px 24px; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+      <h1 style="color: #222; font-size: 2em; margin-bottom: 0.5em;">¡Tu informe está listo!</h1>
       <p>Hola,</p>
       <p>
         Tu informe de precios para el grupo competitivo <strong>'{setName}'</strong> ya está disponible.
       </p>
-      <div style=\"margin: 32px 0;\">
-        <a href=\"https://hotelrateshopper.com/\" style=\"display: inline-block; background: #34a853; color: #fff; font-weight: bold; text-decoration: none; padding: 16px 32px; border-radius: 6px; font-size: 1.1em;\">
+      <div style="margin: 32px 0;">
+        <a href="https://hotelrateshopper.com/" style="display: inline-block; background: #34a853; color: #fff; font-weight: bold; text-decoration: none; padding: 16px 32px; border-radius: 6px; font-size: 1.1em;">
           Ver mi informe en la plataforma
         </a>
       </div>
       <p>También puedes descargar el informe directamente desde este correo. <b>Los enlaces estarán disponibles por 7 días</b>. Luego de ese plazo, siempre podrás acceder a tus informes desde la app.</p>
-      <div style=\"margin: 20px 0;\">
-        <a href=\"{excel_signed_url}\" style=\"display: inline-block; background: #4285f4; color: #fff; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-size: 1em; margin-bottom: 8px;\">
+      <div style="margin: 20px 0;">
+        <a href="{excel_signed_url}" style="display: inline-block; background: #4285f4; color: #fff; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-size: 1em; margin-bottom: 8px;">
           Descargar Informe (Excel)
         </a>
       </div>
-      <div style=\"margin-bottom: 24px;\">
-        <a href=\"{csv_signed_url}\" style=\"color: #4285f4; text-decoration: underline; font-size: 1em;\">
+      <div style="margin-bottom: 24px;">
+        <a href="{csv_signed_url}" style="color: #4285f4; text-decoration: underline; font-size: 1em;">
           Descargar en formato .CSV
         </a>
       </div>
-      <p style=\"margin-top: 32px;\">Gracias por usar <a href=\"https://hotelrateshopper.com\" style=\"color: #4285f4; text-decoration: underline;\">HotelRateShopper.com</a></p>
+      <p style="margin-top: 32px;">Gracias por usar <a href="https://hotelrateshopper.com" style="color: #4285f4; text-decoration: underline;">HotelRateShopper.com</a></p>
     </div>
   </body>
 </html>
-"""
-                }
+""", mail_body)
+                
                 response = mailer.send(mail_body)
                 logger.info(f"[Scraper] ✅ Correo enviado. Respuesta de MailerSend: {response}")
         except Exception as e:
@@ -642,7 +655,8 @@ def cola_procesadora_scraping():
                 data.get('currency', 'USD'),
                 report_id=doc_ref.id,
                 userId=data.get('userId', None),
-                setId=data.get('setId', None)
+                setId=data.get('setId', None),
+                start_date=data.get('start_date', data.get('startDate', None))  # Nueva fecha de inicio
             )
             # Cuando termine, limpiar el flag
             scraper_en_proceso.clear()
@@ -666,6 +680,7 @@ def run_scraper():
         userEmail = data.get('userEmail')
         report_id = data.get('report_id')
         setId = data.get('setId')  # <-- Tomar el setId del payload
+        start_date = data.get('start_date', data.get('startDate'))  # <-- Nueva fecha de inicio
         
         logger.info(f"[run-scraper] Recibido UID: {uid}, report_id: {report_id}, setId: {setId}")
         
@@ -692,11 +707,39 @@ def run_scraper():
                 "message": f"Tu plan {user_plan} permite máximo {plan_limits['max_days']} días"
             }), 400
         
+        # Validar fecha de inicio si se proporciona
+        if start_date:
+            try:
+                from datetime import datetime
+                start_datetime = datetime.strptime(start_date, "%Y-%m-%d")
+                today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                
+                # Verificar que la fecha no sea en el pasado
+                if start_datetime < today:
+                    return jsonify({
+                        "success": False,
+                        "message": "La fecha de inicio no puede ser en el pasado"
+                    }), 400
+                
+                # Verificar que la fecha no sea muy lejana (máximo 1 año)
+                max_future_date = today + timedelta(days=365)
+                if start_datetime > max_future_date:
+                    return jsonify({
+                        "success": False,
+                        "message": "La fecha de inicio no puede ser más de 1 año en el futuro"
+                    }), 400
+                    
+            except ValueError:
+                return jsonify({
+                    "success": False,
+                    "message": "Formato de fecha inválido. Use YYYY-MM-DD"
+                }), 400
+        
         # Iniciar scraper en thread separado
         scraper_status["current_user"] = uid
         thread = threading.Thread(
             target=run_scraper_async,
-            args=(hotel_base_urls, days, userEmail, setName, nights, currency, report_id, uid, setId) # Pasar userId y setId
+            args=(hotel_base_urls, days, userEmail, setName, nights, currency, report_id, uid, setId, start_date) # Pasar userId, setId y start_date
         )
         thread.daemon = True
         thread.start()
@@ -1035,7 +1078,8 @@ def execute_scheduled_tasks():
                         'userEmail': user_data.get('email'),
                         'status': 'queued',
                         'createdAt': datetime.now(),
-                        'scheduled_task': True
+                        'scheduled_task': True,
+                        'start_date': grupo_data.get('start_date')  # Nueva fecha de inicio
                     }
                     
                     # Guardar en Firestore
@@ -1193,6 +1237,59 @@ def configurar_schedule():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/configurar-fecha-inicio', methods=['POST'])
+def configurar_fecha_inicio():
+    try:
+        data = request.get_json()
+        uid = data.get('uid')
+        grupo_id = data.get('grupo_id')
+        start_date = data.get('start_date')  # Formato: "YYYY-MM-DD"
+        
+        if not uid or not grupo_id:
+            return jsonify({"error": "UID y grupo_id requeridos"}), 400
+        
+        # Validar fecha si se proporciona
+        if start_date:
+            try:
+                from datetime import datetime
+                start_datetime = datetime.strptime(start_date, "%Y-%m-%d")
+                today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                
+                # Verificar que la fecha no sea en el pasado
+                if start_datetime < today:
+                    return jsonify({
+                        "success": False,
+                        "message": "La fecha de inicio no puede ser en el pasado"
+                    }), 400
+                
+                # Verificar que la fecha no sea muy lejana (máximo 1 año)
+                max_future_date = today + timedelta(days=365)
+                if start_datetime > max_future_date:
+                    return jsonify({
+                        "success": False,
+                        "message": "La fecha de inicio no puede ser más de 1 año en el futuro"
+                    }), 400
+                    
+            except ValueError:
+                return jsonify({
+                    "success": False,
+                    "message": "Formato de fecha inválido. Use YYYY-MM-DD"
+                }), 400
+        
+        # Actualizar fecha de inicio
+        grupo_ref = db.collection('users').document(uid).collection('grupos').document(grupo_id)
+        grupo_ref.update({
+            'start_date': start_date
+        })
+        
+        return jsonify({
+            "success": True, 
+            "message": f"Fecha de inicio configurada: {start_date or 'hoy'}"
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/create-subscription-checkout', methods=['POST'])
 def create_subscription_checkout():
     try:
@@ -1285,27 +1382,31 @@ def mercado_pago_webhook():
                                     
                                     # Enviar email de confirmación
                                     try:
-                                        from mailersend import Email
-                                        mailer = Email(os.environ.get('MAILERSEND_API_KEY'))
+                                        from mailersend import emails
+                                        mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
                                         
-                                        mail_body = {
-                                            "from": {
-                                                "email": "noreply@tuapp.com",
-                                                "name": "Tu App"
-                                            },
-                                            "to": [
-                                                {
-                                                    "email": email,
-                                                    "name": "Usuario"
-                                                }
-                                            ],
-                                            "subject": "Plan actualizado exitosamente",
-                                            "html": f"""
-                                            <h2>¡Plan actualizado!</h2>
-                                            <p>Tu plan ha sido actualizado a <strong>{plan}</strong>.</p>
-                                            <p>Gracias por tu compra.</p>
-                                            """
+                                        mail_body = {}
+                                        
+                                        mail_from = {
+                                            "email": "noreply@tuapp.com",
+                                            "name": "Tu App"
                                         }
+                                        
+                                        recipients = [
+                                            {
+                                                "email": email,
+                                                "name": "Usuario"
+                                            }
+                                        ]
+                                        
+                                        mailer.set_mail_from(mail_from, mail_body)
+                                        mailer.set_mail_to(recipients, mail_body)
+                                        mailer.set_subject("Plan actualizado exitosamente", mail_body)
+                                        mailer.set_html_content(f"""
+                                        <h2>¡Plan actualizado!</h2>
+                                        <p>Tu plan ha sido actualizado a <strong>{plan}</strong>.</p>
+                                        <p>Gracias por tu compra.</p>
+                                        """, mail_body)
                                         
                                         mailer.send(mail_body)
                                         
@@ -1323,26 +1424,30 @@ def mercado_pago_webhook():
                                 email = "_".join(parts[2:])
                                 
                                 try:
-                                    from mailersend import Email
-                                    mailer = Email(os.environ.get('MAILERSEND_API_KEY'))
+                                    from mailersend import emails
+                                    mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
                                     
-                                    mail_body = {
-                                        "from": {
-                                            "email": "noreply@tuapp.com",
-                                            "name": "Tu App"
-                                        },
-                                        "to": [
-                                            {
-                                                "email": email,
-                                                "name": "Usuario"
-                                            }
-                                        ],
-                                        "subject": "Problema con el pago",
-                                        "html": """
-                                        <h2>Problema con el pago</h2>
-                                        <p>Tu pago fue rechazado. Por favor, intenta nuevamente.</p>
-                                        """
+                                    mail_body = {}
+                                    
+                                    mail_from = {
+                                        "email": "noreply@tuapp.com",
+                                        "name": "Tu App"
                                     }
+                                    
+                                    recipients = [
+                                        {
+                                            "email": email,
+                                            "name": "Usuario"
+                                        }
+                                    ]
+                                    
+                                    mailer.set_mail_from(mail_from, mail_body)
+                                    mailer.set_mail_to(recipients, mail_body)
+                                    mailer.set_subject("Problema con el pago", mail_body)
+                                    mailer.set_html_content("""
+                                    <h2>Problema con el pago</h2>
+                                    <p>Tu pago fue rechazado. Por favor, intenta nuevamente.</p>
+                                    """, mail_body)
                                     
                                     mailer.send(mail_body)
                                     
@@ -1392,27 +1497,31 @@ def mercado_pago_webhook():
                             
                             # Enviar email de confirmación
                             try:
-                                from mailersend import Email
-                                mailer = Email(os.environ.get('MAILERSEND_API_KEY'))
+                                from mailersend import emails
+                                mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
                                 
-                                mail_body = {
-                                    "from": {
-                                        "email": "noreply@tuapp.com",
-                                        "name": "Tu App"
-                                    },
-                                    "to": [
-                                        {
-                                            "email": payer_email,
-                                            "name": "Usuario"
-                                        }
-                                    ],
-                                    "subject": "Suscripción activada exitosamente",
-                                    "html": f"""
-                                    <h2>¡Suscripción activada!</h2>
-                                    <p>Tu suscripción al plan <strong>{plan}</strong> ha sido activada exitosamente.</p>
-                                    <p>Gracias por tu compra.</p>
-                                    """
+                                mail_body = {}
+                                
+                                mail_from = {
+                                    "email": "noreply@tuapp.com",
+                                    "name": "Tu App"
                                 }
+                                
+                                recipients = [
+                                    {
+                                        "email": payer_email,
+                                        "name": "Usuario"
+                                    }
+                                ]
+                                
+                                mailer.set_mail_from(mail_from, mail_body)
+                                mailer.set_mail_to(recipients, mail_body)
+                                mailer.set_subject("Suscripción activada exitosamente", mail_body)
+                                mailer.set_html_content(f"""
+                                <h2>¡Suscripción activada!</h2>
+                                <p>Tu suscripción al plan <strong>{plan}</strong> ha sido activada exitosamente.</p>
+                                <p>Gracias por tu compra.</p>
+                                """, mail_body)
                                 
                                 mailer.send(mail_body)
                                 
@@ -1430,26 +1539,30 @@ def mercado_pago_webhook():
                         payer_email = preapproval_data.get("payer_email", "")
                         
                         try:
-                            from mailersend import Email
-                            mailer = Email(os.environ.get('MAILERSEND_API_KEY'))
+                            from mailersend import emails
+                            mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
                             
-                            mail_body = {
-                                "from": {
-                                    "email": "noreply@tuapp.com",
-                                    "name": "Tu App"
-                                },
-                                "to": [
-                                    {
-                                        "email": payer_email,
-                                        "name": "Usuario"
-                                    }
-                                ],
-                                "subject": "Problema con la suscripción",
-                                "html": """
-                                <h2>Problema con la suscripción</h2>
-                                <p>Tu suscripción fue rechazada. Por favor, intenta nuevamente.</p>
-                                """
+                            mail_body = {}
+                            
+                            mail_from = {
+                                "email": "noreply@tuapp.com",
+                                "name": "Tu App"
                             }
+                            
+                            recipients = [
+                                {
+                                    "email": payer_email,
+                                    "name": "Usuario"
+                                }
+                            ]
+                            
+                            mailer.set_mail_from(mail_from, mail_body)
+                            mailer.set_mail_to(recipients, mail_body)
+                            mailer.set_subject("Problema con la suscripción", mail_body)
+                            mailer.set_html_content("""
+                            <h2>Problema con la suscripción</h2>
+                            <p>Tu suscripción fue rechazada. Por favor, intenta nuevamente.</p>
+                            """, mail_body)
                             
                             mailer.send(mail_body)
                             

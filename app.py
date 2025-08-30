@@ -14,7 +14,7 @@ import json
 from google.oauth2 import service_account
 import threading
 import logging
-from mailersend import emails
+from mailersend import MailerSendClient, EmailRequest, EmailContact
 from time import sleep
 import mercadopago
 import time
@@ -491,38 +491,34 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         try:
             if userEmail:
                 logger.info(f"[Scraper] Enviando correo a: {userEmail}")
-                from mailersend import emails
-                mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
+                from mailersend import MailerSendClient, EmailRequest, EmailContact
                 
-                # Definir un diccionario vacío para poblar con valores del correo
-                mail_body = {}
+                # Crear cliente de MailerSend
+                client = MailerSendClient(api_key=os.environ.get('MAILERSEND_API_KEY'))
                 
-                # Configurar remitente
-                mail_from = {
-                    "email": os.environ.get('MAILERSEND_SENDER_EMAIL', 'noreply@hotelrateshopper.com'),
-                    "name": os.environ.get('MAILERSEND_SENDER_NAME', 'Hotel Rate Shopper')
-                }
+                # Crear contactos
+                from_contact = EmailContact(
+                    email=os.environ.get('MAILERSEND_SENDER_EMAIL', 'noreply@hotelrateshopper.com'),
+                    name=os.environ.get('MAILERSEND_SENDER_NAME', 'Hotel Rate Shopper')
+                )
                 
-                # Configurar destinatario
-                recipients = [
-                    {
-                        "email": userEmail,
-                        "name": "Usuario"
-                    }
-                ]
+                to_contact = EmailContact(
+                    email=userEmail,
+                    name="Usuario"
+                )
                 
-                # Configurar reply-to
-                reply_to = {
-                    "email": "nicolas.wegher@gmail.com",
-                    "name": "Nicolás Wegher"
-                }
+                reply_to_contact = EmailContact(
+                    email="nicolas.wegher@gmail.com",
+                    name="Nicolás Wegher"
+                )
                 
-                # Configurar el correo usando los métodos de la librería
-                mailer.set_mail_from(mail_from, mail_body)
-                mailer.set_mail_to(recipients, mail_body)
-                mailer.set_subject(f"¡Tu informe para '{setName}' está listo!", mail_body)
-                mailer.set_reply_to(reply_to, mail_body)
-                mailer.set_html_content(f"""
+                # Crear solicitud de email
+                email_request = EmailRequest(
+                    from_email=from_contact,
+                    to=[to_contact],
+                    reply_to=reply_to_contact,
+                    subject=f"¡Tu informe para '{setName}' está listo!",
+                    html=f"""
 <!DOCTYPE html>
 <html lang="es">
   <head>
@@ -556,9 +552,11 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
     </div>
   </body>
 </html>
-""", mail_body)
+"""
+                )
                 
-                response = mailer.send(mail_body)
+                # Enviar email
+                response = client.emails.send(email_request)
                 logger.info(f"[Scraper] ✅ Correo enviado. Respuesta de MailerSend: {response}")
         except Exception as e:
             logger.error(f"[Scraper] ❌ Error enviando correo: {e}")
@@ -1382,33 +1380,36 @@ def mercado_pago_webhook():
                                     
                                     # Enviar email de confirmación
                                     try:
-                                        from mailersend import emails
-                                        mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
+                                        from mailersend import MailerSendClient, EmailRequest, EmailContact
                                         
-                                        mail_body = {}
+                                        # Crear cliente de MailerSend
+                                        client = MailerSendClient(api_key=os.environ.get('MAILERSEND_API_KEY'))
                                         
-                                        mail_from = {
-                                            "email": "noreply@tuapp.com",
-                                            "name": "Tu App"
-                                        }
+                                        # Crear contactos
+                                        from_contact = EmailContact(
+                                            email="noreply@tuapp.com",
+                                            name="Tu App"
+                                        )
                                         
-                                        recipients = [
-                                            {
-                                                "email": email,
-                                                "name": "Usuario"
-                                            }
-                                        ]
+                                        to_contact = EmailContact(
+                                            email=email,
+                                            name="Usuario"
+                                        )
                                         
-                                        mailer.set_mail_from(mail_from, mail_body)
-                                        mailer.set_mail_to(recipients, mail_body)
-                                        mailer.set_subject("Plan actualizado exitosamente", mail_body)
-                                        mailer.set_html_content(f"""
+                                        # Crear solicitud de email
+                                        email_request = EmailRequest(
+                                            from_email=from_contact,
+                                            to=[to_contact],
+                                            subject="Plan actualizado exitosamente",
+                                            html=f"""
                                         <h2>¡Plan actualizado!</h2>
                                         <p>Tu plan ha sido actualizado a <strong>{plan}</strong>.</p>
                                         <p>Gracias por tu compra.</p>
-                                        """, mail_body)
+                                        """
+                                        )
                                         
-                                        mailer.send(mail_body)
+                                        # Enviar email
+                                        client.emails.send(email_request)
                                         
                                     except Exception as e:
                                         logger.error(f"Error enviando email: {e}")
@@ -1424,32 +1425,35 @@ def mercado_pago_webhook():
                                 email = "_".join(parts[2:])
                                 
                                 try:
-                                    from mailersend import emails
-                                    mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
+                                    from mailersend import MailerSendClient, EmailRequest, EmailContact
                                     
-                                    mail_body = {}
+                                    # Crear cliente de MailerSend
+                                    client = MailerSendClient(api_key=os.environ.get('MAILERSEND_API_KEY'))
                                     
-                                    mail_from = {
-                                        "email": "noreply@tuapp.com",
-                                        "name": "Tu App"
-                                    }
+                                    # Crear contactos
+                                    from_contact = EmailContact(
+                                        email="noreply@tuapp.com",
+                                        name="Tu App"
+                                    )
                                     
-                                    recipients = [
-                                        {
-                                            "email": email,
-                                            "name": "Usuario"
-                                        }
-                                    ]
+                                    to_contact = EmailContact(
+                                        email=email,
+                                        name="Usuario"
+                                    )
                                     
-                                    mailer.set_mail_from(mail_from, mail_body)
-                                    mailer.set_mail_to(recipients, mail_body)
-                                    mailer.set_subject("Problema con el pago", mail_body)
-                                    mailer.set_html_content("""
+                                    # Crear solicitud de email
+                                    email_request = EmailRequest(
+                                        from_email=from_contact,
+                                        to=[to_contact],
+                                        subject="Problema con el pago",
+                                        html="""
                                     <h2>Problema con el pago</h2>
                                     <p>Tu pago fue rechazado. Por favor, intenta nuevamente.</p>
-                                    """, mail_body)
+                                    """
+                                    )
                                     
-                                    mailer.send(mail_body)
+                                    # Enviar email
+                                    client.emails.send(email_request)
                                     
                                 except Exception as e:
                                     logger.error(f"Error enviando email: {e}")
@@ -1497,33 +1501,36 @@ def mercado_pago_webhook():
                             
                             # Enviar email de confirmación
                             try:
-                                from mailersend import emails
-                                mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
+                                from mailersend import MailerSendClient, EmailRequest, EmailContact
                                 
-                                mail_body = {}
+                                # Crear cliente de MailerSend
+                                client = MailerSendClient(api_key=os.environ.get('MAILERSEND_API_KEY'))
                                 
-                                mail_from = {
-                                    "email": "noreply@tuapp.com",
-                                    "name": "Tu App"
-                                }
+                                # Crear contactos
+                                from_contact = EmailContact(
+                                    email="noreply@tuapp.com",
+                                    name="Tu App"
+                                )
                                 
-                                recipients = [
-                                    {
-                                        "email": payer_email,
-                                        "name": "Usuario"
-                                    }
-                                ]
+                                to_contact = EmailContact(
+                                    email=payer_email,
+                                    name="Usuario"
+                                )
                                 
-                                mailer.set_mail_from(mail_from, mail_body)
-                                mailer.set_mail_to(recipients, mail_body)
-                                mailer.set_subject("Suscripción activada exitosamente", mail_body)
-                                mailer.set_html_content(f"""
+                                # Crear solicitud de email
+                                email_request = EmailRequest(
+                                    from_email=from_contact,
+                                    to=[to_contact],
+                                    subject="Suscripción activada exitosamente",
+                                    html=f"""
                                 <h2>¡Suscripción activada!</h2>
                                 <p>Tu suscripción al plan <strong>{plan}</strong> ha sido activada exitosamente.</p>
                                 <p>Gracias por tu compra.</p>
-                                """, mail_body)
+                                """
+                                )
                                 
-                                mailer.send(mail_body)
+                                # Enviar email
+                                client.emails.send(email_request)
                                 
                             except Exception as e:
                                 logger.error(f"Error enviando email: {e}")
@@ -1539,32 +1546,35 @@ def mercado_pago_webhook():
                         payer_email = preapproval_data.get("payer_email", "")
                         
                         try:
-                            from mailersend import emails
-                            mailer = emails.NewEmail(os.environ.get('MAILERSEND_API_KEY'))
+                            from mailersend import MailerSendClient, EmailRequest, EmailContact
                             
-                            mail_body = {}
+                            # Crear cliente de MailerSend
+                            client = MailerSendClient(api_key=os.environ.get('MAILERSEND_API_KEY'))
                             
-                            mail_from = {
-                                "email": "noreply@tuapp.com",
-                                "name": "Tu App"
-                            }
+                            # Crear contactos
+                            from_contact = EmailContact(
+                                email="noreply@tuapp.com",
+                                name="Tu App"
+                            )
                             
-                            recipients = [
-                                {
-                                    "email": payer_email,
-                                    "name": "Usuario"
-                                }
-                            ]
+                            to_contact = EmailContact(
+                                email=payer_email,
+                                name="Usuario"
+                            )
                             
-                            mailer.set_mail_from(mail_from, mail_body)
-                            mailer.set_mail_to(recipients, mail_body)
-                            mailer.set_subject("Problema con la suscripción", mail_body)
-                            mailer.set_html_content("""
+                            # Crear solicitud de email
+                            email_request = EmailRequest(
+                                from_email=from_contact,
+                                to=[to_contact],
+                                subject="Problema con la suscripción",
+                                html="""
                             <h2>Problema con la suscripción</h2>
                             <p>Tu suscripción fue rechazada. Por favor, intenta nuevamente.</p>
-                            """, mail_body)
+                            """
+                            )
                             
-                            mailer.send(mail_body)
+                            # Enviar email
+                            client.emails.send(email_request)
                             
                         except Exception as e:
                             logger.error(f"Error enviando email: {e}")

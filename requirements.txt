@@ -9,5 +9,5 @@ firebase-admin==6.4.0
 google-cloud-storage==2.16.0
 apify-client
 gunicorn
-mailersend
+mailersend==2.0.0
 mercadopago==2.3.0

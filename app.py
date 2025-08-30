@@ -133,6 +133,7 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         from apify_scraper import scrape_booking_data
         
         logger.info(f"[Scraper] Ejecutando scraper para {len(hotel_base_urls)} hoteles por {days} días, {nights} noches, moneda {currency}, fecha inicio: {start_date or 'hoy'}")
+        logger.info(f"[Scraper] DEBUG - start_date recibido: {start_date} (tipo: {type(start_date)})")
         result = scrape_booking_data(hotel_base_urls, days, nights, currency, start_date)
         
         if not result:

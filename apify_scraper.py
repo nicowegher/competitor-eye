@@ -103,6 +103,7 @@ def scrape_booking_data(hotel_base_urls, days=2, nights=1, currency="USD", start
         start_date: Fecha de inicio en formato "YYYY-MM-DD". Si es None, usa hoy.
     """
     logger.info(f"Iniciando scraping para {len(hotel_base_urls)} hoteles por {days} días, {nights} noches, moneda {currency}")
+    logger.info(f"DEBUG - start_date recibido en scraper: {start_date} (tipo: {type(start_date)})")
     client = ApifyClient(APIFY_API_TOKEN)
     
     # Determinar fecha de inicio

@@ -45,17 +45,25 @@ def fetch_price_for_night(client, base_url, hotel_name, checkin, checkout, curre
             
             if run is None or "defaultDatasetId" not in run:
                 logger.warning(f"No se pudo obtener dataset para {hotel_name} - {checkin}")
-                return (hotel_name, base_url, checkin, None)
+                return (hotel_name, base_url, checkin, None, None, None)
                 
             dataset_id = run["defaultDatasetId"]
             items = client.dataset(dataset_id).list_items().items
             
             if not items:
                 logger.warning(f"No se encontraron items para {hotel_name} - {checkin}")
-                return (hotel_name, base_url, checkin, None)
+                return (hotel_name, base_url, checkin, None, None, None)
                 
             price = None
+            rating = None
+            reviews = None
+            
             for item in items:
+                # Extraer rating y reviews del item (solo una vez, son datos estáticos)
+                if rating is None:
+                    rating = item.get("rating")
+                    reviews = item.get("reviews")
+                
                 if "rooms" in item and item["rooms"]:
                     for room in item["rooms"]:
                         if "options" in room and room["options"]:
@@ -63,12 +71,12 @@ def fetch_price_for_night(client, base_url, hotel_name, checkin, checkout, curre
                                 try:
                                     price = str(float(option["displayedPrice"]))
                                     logger.info(f"Precio encontrado para {hotel_name} - {checkin}: {price}")
-                                    return (hotel_name, base_url, checkin, price)
+                                    return (hotel_name, base_url, checkin, price, rating, reviews)
                                 except (ValueError, TypeError, KeyError):
                                     continue
                                     
             logger.warning(f"No se encontró precio válido para {hotel_name} - {checkin}")
-            return (hotel_name, base_url, checkin, price)
+            return (hotel_name, base_url, checkin, price, rating, reviews)
             
         except Exception as e:
             error_msg = str(e).lower()
@@ -83,13 +91,13 @@ def fetch_price_for_night(client, base_url, hotel_name, checkin, checkout, curre
                     continue
                 else:
                     logger.error(f"Rate limit persistente para {hotel_name} - {checkin} después de {max_retries} intentos")
-                    return (hotel_name, base_url, checkin, None)
+                    return (hotel_name, base_url, checkin, None, None, None)
             else:
                 # Otros errores - no reintentar
                 logger.error(f"Error para {hotel_name} {checkin}: {e}")
-                return (hotel_name, base_url, checkin, None)
+                return (hotel_name, base_url, checkin, None, None, None)
     
-    return (hotel_name, base_url, checkin, None)
+    return (hotel_name, base_url, checkin, None, None, None)
 
 def scrape_booking_data(hotel_base_urls, days=2, nights=1, currency="USD", start_date=None):
     """
@@ -158,14 +166,27 @@ def scrape_booking_data(hotel_base_urls, days=2, nights=1, currency="USD", start
                 logger.info(f"Progreso: {completed}/{len(tasks)} - {hotel_name} - {checkin}")
             except Exception as exc:
                 logger.error(f"Error en {hotel_name} {checkin}: {exc}")
-                results.append((hotel_name, base_url, checkin, None))
+                results.append((hotel_name, base_url, checkin, None, None, None))
             # Delay reducido para acelerar el proceso
             time.sleep(0.5)
-    # Construir DataFrame
+    # Construir DataFrame y recopilar metadata de hoteles
     df_dict = {}
-    for hotel_name, base_url, checkin, price in results:
+    hotel_metadata = {}  # Diccionario: base_url -> {"rating": X, "reviews": Y, "name": Z}
+    
+    for hotel_name, base_url, checkin, price, rating, reviews in results:
+        # Construir datos de precios por fecha
         if base_url not in df_dict:
             df_dict[base_url] = {"Hotel Name": hotel_name, "URL": base_url}
+        
+        # Recopilar metadata una vez por hotel (del primer resultado exitoso)
+        if base_url not in hotel_metadata and (rating is not None or reviews is not None):
+            hotel_metadata[base_url] = {
+                "rating": rating,
+                "reviews": reviews,
+                "name": hotel_name
+            }
+            logger.info(f"Metadata recopilada para {hotel_name}: rating={rating}, reviews={reviews}")
+        
         # Si nights > 1 y price es numérico, dividir por nights para obtener precio por noche
         if price is not None:
             try:
@@ -177,9 +198,13 @@ def scrape_booking_data(hotel_base_urls, days=2, nights=1, currency="USD", start
                 df_dict[base_url][checkin] = price
         else:
             df_dict[base_url][checkin] = price
+    
     final_results = list(df_dict.values())
     logger.info(f"Scraping completado. Total de hoteles procesados: {len(final_results)}")
-    return final_results
+    logger.info(f"Metadata recopilada para {len(hotel_metadata)} hoteles")
+    
+    # Retornar resultados y metadata
+    return final_results, hotel_metadata
 
 if __name__ == '__main__':
     # Ejemplo de uso manual
@@ -190,5 +215,6 @@ if __name__ == '__main__':
     days = 2
     nights = 1
     currency = "USD"
-    scraped_data = scrape_booking_data(hotel_base_urls, days=days, nights=nights, currency=currency)
-    print(scraped_data) 
+    scraped_data, hotel_metadata = scrape_booking_data(hotel_base_urls, days=days, nights=nights, currency=currency)
+    print(scraped_data)
+    print("Metadata:", hotel_metadata) 

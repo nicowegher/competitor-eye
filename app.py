@@ -134,13 +134,14 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         
         logger.info(f"[Scraper] Ejecutando scraper para {len(hotel_base_urls)} hoteles por {days} días, {nights} noches, moneda {currency}, fecha inicio: {start_date or 'hoy'}")
         logger.info(f"[Scraper] DEBUG - start_date recibido: {start_date} (tipo: {type(start_date)})")
-        result = scrape_booking_data(hotel_base_urls, days, nights, currency, start_date)
+        result, hotel_metadata = scrape_booking_data(hotel_base_urls, days, nights, currency, start_date)
         
         if not result:
             logger.error(f"[Scraper] ERROR: No se obtuvieron datos del scraper. Antes de raise Exception...")
             raise Exception("No se obtuvieron datos del scraper")
         
         logger.info(f"[Scraper] Datos obtenidos del scraper: {len(result)} hoteles")
+        logger.info(f"[Scraper] Metadata de hoteles obtenida: {len(hotel_metadata)} hoteles")
         
         # --- ENRIQUECER DATOS PARA GRÁFICOS ---
         hotelNames = [hotel["Hotel Name"] for hotel in result]
@@ -459,6 +460,54 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
         logger.info(f"[Scraper] URL firmada CSV: {csv_signed_url}")
         logger.info(f"[Scraper] URL firmada Excel: {excel_signed_url}")
 
+        # Construir positioning_data para cada hotel
+        positioning_data = []
+        hotel_idx = 0  # Contador para hoteles reales (ignorando filas de métricas)
+        
+        for hotel in result:
+            # Filtrar solo los hoteles reales (no las filas de métricas)
+            hotel_name = hotel.get("Hotel Name", "")
+            hotel_url = hotel.get("URL", "")
+            
+            # Saltar filas de métricas (no son hoteles)
+            if "Tarifa promedio" in hotel_name or "Disponibilidad" in hotel_name or "Diferencia de mi tarifa" in hotel_name:
+                continue
+            
+            # Determinar si es el hotel principal (primera posición en hotelNames)
+            # El primer hotel en la lista siempre es el principal
+            is_own_hotel = (hotel_idx == 0)
+            
+            # Obtener metadata del hotel desde hotel_metadata
+            metadata = hotel_metadata.get(hotel_url, {})
+            quality_score = metadata.get("rating")
+            reviews_count = metadata.get("reviews")
+            
+            # Convertir quality_score a float si es numérico
+            if quality_score is not None:
+                try:
+                    quality_score = float(quality_score)
+                except (ValueError, TypeError):
+                    quality_score = None
+            
+            # Convertir reviews_count a int si es numérico
+            if reviews_count is not None:
+                try:
+                    reviews_count = int(reviews_count)
+                except (ValueError, TypeError):
+                    reviews_count = None
+            
+            positioning_data.append({
+                "hotel_name": hotel_name,
+                "is_own_hotel": is_own_hotel,
+                "quality_score": quality_score,
+                "reviews_count": reviews_count
+            })
+            
+            logger.info(f"[Scraper] Positioning data para {hotel_name}: is_own_hotel={is_own_hotel}, quality_score={quality_score}, reviews_count={reviews_count}")
+            hotel_idx += 1
+        
+        logger.info(f"[Scraper] Positioning data construida con {len(positioning_data)} hoteles")
+
         report_data = {
             "status": "completed",
             "csvFileUrl": csv_signed_url,
@@ -474,7 +523,8 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
             "days": days,
             "nights": nights,
             "currency": currency,
-            "start_date": start_date
+            "start_date": start_date,
+            "positioning_data": positioning_data
         }
         
         logger.info(f"[Scraper] ANTES de intentar guardar en Firestore. report_data keys: {list(report_data.keys())}")

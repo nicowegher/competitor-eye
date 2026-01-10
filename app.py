@@ -242,10 +242,11 @@ def run_scraper_async(hotel_base_urls, days, userEmail=None, setName=None, night
                 else:
                     promedio_competidores_row[date] = ''
                 
-                if hotel_principal in precios_validos:
-                    disponibilidad_row[date] = "100"
-                else:
-                    disponibilidad_row[date] = "0"
+                # Calcular disponibilidad (%) - Contar todos los hoteles del set competitivo
+                total_hoteles = len(hotelNames)
+                hoteles_con_precio = len([name for name in hotelNames if precios_validos.get(name) is not None])
+                disponibilidad_porcentaje = round((hoteles_con_precio / total_hoteles) * 100) if total_hoteles > 0 else 0
+                disponibilidad_row[date] = str(disponibilidad_porcentaje)
                 
                 if hotel_principal in precios_validos and promedio_competidores_row[date] not in (None, ""):
                     mi_precio = precios_validos[hotel_principal]

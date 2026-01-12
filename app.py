@@ -1076,11 +1076,16 @@ def execute_scheduled_tasks():
         
         logger.info("[execute-scheduled-tasks] Iniciando ejecución de tareas programadas")
         
+        # Obtener día actual (0=Lunes, 6=Domingo)
+        current_weekday = datetime.now().weekday()
+        logger.info(f"[execute-scheduled-tasks] Día actual de la semana: {current_weekday} ({['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'][current_weekday]})")
+        
         # Obtener todos los usuarios que tienen grupos con schedule_enabled = True
         users_ref = db.collection('users')
         users = users_ref.stream()
         
         total_tasks_created = 0
+        total_tasks_skipped = 0
         
         for user_doc in users:
             uid = user_doc.id
@@ -1096,6 +1101,21 @@ def execute_scheduled_tasks():
                 
                 # Verificar si el grupo tiene schedule habilitado
                 if grupo_data.get('schedule_enabled', False):
+                    # Obtener días programados del grupo
+                    schedule_weekdays = grupo_data.get('schedule_weekdays', [])
+                    
+                    # Verificar si debe ejecutarse hoy
+                    # Si schedule_weekdays está vacío o no existe, mantener comportamiento anterior (ejecutar siempre)
+                    if schedule_weekdays and len(schedule_weekdays) > 0:
+                        if current_weekday not in schedule_weekdays:
+                            logger.info(f"[execute-scheduled-tasks] ⏭️ Omitiendo grupo {grupo_id} del usuario {uid} - hoy es día {current_weekday} ({['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'][current_weekday]}), programado para días {schedule_weekdays}")
+                            total_tasks_skipped += 1
+                            continue
+                        else:
+                            logger.info(f"[execute-scheduled-tasks] ✅ Día coincide - procesando grupo {grupo_id} del usuario {uid} (día {current_weekday} está en {schedule_weekdays})")
+                    else:
+                        logger.info(f"[execute-scheduled-tasks] ⚠️ Grupo {grupo_id} sin días específicos configurados - ejecutando (comportamiento retrocompatible)")
+                    
                     logger.info(f"[execute-scheduled-tasks] Procesando grupo {grupo_id} del usuario {uid}")
                     
                     # Obtener URLs de hoteles
@@ -1140,11 +1160,12 @@ def execute_scheduled_tasks():
                     except Exception as e:
                         logger.error(f"[execute-scheduled-tasks] ❌ Error creando tarea para grupo {grupo_id}: {e}")
         
-        logger.info(f"[execute-scheduled-tasks] ✅ Proceso completado. {total_tasks_created} tareas creadas")
+        logger.info(f"[execute-scheduled-tasks] ✅ Proceso completado. {total_tasks_created} tareas creadas, {total_tasks_skipped} tareas omitidas")
         return jsonify({
             "success": True, 
             "message": f"Tareas programadas encoladas: {total_tasks_created}",
-            "tasks_created": total_tasks_created
+            "tasks_created": total_tasks_created,
+            "tasks_skipped": total_tasks_skipped
         })
         
     except Exception as e:
@@ -1197,7 +1218,10 @@ def crear_grupo():
             'hotel_principal': hotel_principal,
             'competidores': [],
             'days': 7,
+            'nights': 1,
+            'currency': 'USD',
             'schedule_enabled': False,
+            'schedule_weekdays': [],
             'created_at': datetime.now()
         })
         return jsonify({"success": True, "message": "Grupo creado"})
@@ -1269,8 +1293,13 @@ def configurar_schedule():
         uid = data.get('uid')
         grupo_id = data.get('grupo_id')
         enabled = data.get('enabled', False)
+        schedule_weekdays = data.get('schedule_weekdays', [])
+        nights = data.get('nights')
+        currency = data.get('currency')
+        
         if not uid or not grupo_id:
             return jsonify({"error": "UID y grupo_id requeridos"}), 400
+        
         # Verificar si el plan permite scheduling
         user_plan = get_user_plan(uid)
         plan_limits = PLAN_LIMITS.get(user_plan, PLAN_LIMITS["free_trial"])
@@ -1278,13 +1307,54 @@ def configurar_schedule():
             return jsonify({
                 "error": f"Tu plan {user_plan} no permite programación automática"
             }), 400
+        
+        # Validar schedule_weekdays si se proporciona
+        if schedule_weekdays is not None:
+            if not isinstance(schedule_weekdays, list):
+                return jsonify({"error": "schedule_weekdays debe ser un array"}), 400
+            
+            # Validar máximo 2 días (según la UI)
+            if len(schedule_weekdays) > 2:
+                return jsonify({"error": "Máximo 2 días de la semana permitidos"}), 400
+            
+            # Validar que todos los valores estén entre 0-6
+            for day in schedule_weekdays:
+                if not isinstance(day, int) or day < 0 or day > 6:
+                    return jsonify({"error": "Los días de la semana deben ser números entre 0 (Lunes) y 6 (Domingo)"}), 400
+            
+            # Eliminar duplicados y ordenar
+            schedule_weekdays = sorted(list(set(schedule_weekdays)))
+        
+        # Preparar datos para actualizar
+        update_data = {
+            'schedule_enabled': enabled
+        }
+        
+        # Agregar schedule_weekdays si se proporciona
+        if schedule_weekdays is not None:
+            update_data['schedule_weekdays'] = schedule_weekdays if enabled else []
+        
+        # Agregar nights si se proporciona
+        if nights is not None:
+            if not isinstance(nights, int) or nights < 1:
+                return jsonify({"error": "nights debe ser un número entero mayor a 0"}), 400
+            update_data['nights'] = nights
+        
+        # Agregar currency si se proporciona
+        if currency is not None:
+            if not isinstance(currency, str) or len(currency) != 3:
+                return jsonify({"error": "currency debe ser un código de 3 letras (ej: USD, EUR)"}), 400
+            update_data['currency'] = currency.upper()
+        
         # Actualizar schedule
         grupo_ref = db.collection('users').document(uid).collection('grupos').document(grupo_id)
-        grupo_ref.update({
-            'schedule_enabled': enabled
-        })
+        grupo_ref.update(update_data)
+        
+        logger.info(f"[configurar-schedule] ✅ Schedule configurado para grupo {grupo_id}: enabled={enabled}, weekdays={schedule_weekdays}, nights={nights}, currency={currency}")
+        
         return jsonify({"success": True, "message": "Schedule configurado"})
     except Exception as e:
+        logger.error(f"[configurar-schedule] ❌ Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/configurar-fecha-inicio', methods=['POST'])

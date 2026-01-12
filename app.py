@@ -1296,6 +1296,7 @@ def configurar_schedule():
         schedule_weekdays = data.get('schedule_weekdays', [])
         nights = data.get('nights')
         currency = data.get('currency')
+        days = data.get('days')
         
         if not uid or not grupo_id:
             return jsonify({"error": "UID y grupo_id requeridos"}), 400
@@ -1346,11 +1347,22 @@ def configurar_schedule():
                 return jsonify({"error": "currency debe ser un código de 3 letras (ej: USD, EUR)"}), 400
             update_data['currency'] = currency.upper()
         
+        # Agregar days si se proporciona
+        if days is not None:
+            if not isinstance(days, int) or days < 1:
+                return jsonify({"error": "days debe ser un número entero mayor a 0"}), 400
+            # Validar límites del plan
+            if days > plan_limits["max_days"]:
+                return jsonify({
+                    "error": f"Tu plan {user_plan} permite máximo {plan_limits['max_days']} días"
+                }), 400
+            update_data['days'] = days
+        
         # Actualizar schedule
         grupo_ref = db.collection('users').document(uid).collection('grupos').document(grupo_id)
         grupo_ref.update(update_data)
         
-        logger.info(f"[configurar-schedule] ✅ Schedule configurado para grupo {grupo_id}: enabled={enabled}, weekdays={schedule_weekdays}, nights={nights}, currency={currency}")
+        logger.info(f"[configurar-schedule] ✅ Schedule configurado para grupo {grupo_id}: enabled={enabled}, weekdays={schedule_weekdays}, nights={nights}, currency={currency}, days={days}")
         
         return jsonify({"success": True, "message": "Schedule configurado"})
     except Exception as e:

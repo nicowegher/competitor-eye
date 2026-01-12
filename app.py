@@ -1358,11 +1358,64 @@ def configurar_schedule():
                 }), 400
             update_data['days'] = days
         
-        # Actualizar schedule
+        # Actualizar o crear schedule
         grupo_ref = db.collection('users').document(uid).collection('grupos').document(grupo_id)
-        grupo_ref.update(update_data)
+        grupo_doc = grupo_ref.get()
         
-        logger.info(f"[configurar-schedule] ✅ Schedule configurado para grupo {grupo_id}: enabled={enabled}, weekdays={schedule_weekdays}, nights={nights}, currency={currency}, days={days}")
+        if grupo_doc.exists:
+            # Si el grupo existe, actualizar
+            grupo_ref.update(update_data)
+            logger.info(f"[configurar-schedule] ✅ Schedule actualizado para grupo {grupo_id}: enabled={enabled}, weekdays={schedule_weekdays}, nights={nights}, currency={currency}, days={days}")
+        else:
+            # Si el grupo no existe, crearlo con los datos básicos
+            # Intentar obtener datos del competitive_set si existe
+            try:
+                competitive_set_ref = db.collection('competitive_sets').document(grupo_id)
+                competitive_set_doc = competitive_set_ref.get()
+                
+                if competitive_set_doc.exists:
+                    competitive_set_data = competitive_set_doc.to_dict()
+                    # Crear grupo con datos del competitive_set
+                    grupo_data = {
+                        'name': competitive_set_data.get('name', 'Grupo sin nombre'),
+                        'hotel_principal': competitive_set_data.get('ownHotelUrl', ''),
+                        'competidores': competitive_set_data.get('competitorHotelUrls', []),
+                        'days': competitive_set_data.get('days', 7),
+                        'nights': competitive_set_data.get('nights', 1),
+                        'currency': competitive_set_data.get('currency', 'USD'),
+                        'created_at': competitive_set_data.get('createdAt') or datetime.now(),
+                        **update_data  # Incluir los datos de schedule
+                    }
+                else:
+                    # Si no existe competitive_set, crear grupo básico
+                    grupo_data = {
+                        'name': 'Grupo Programado',
+                        'hotel_principal': '',
+                        'competidores': [],
+                        'days': 7,
+                        'nights': 1,
+                        'currency': 'USD',
+                        'created_at': datetime.now(),
+                        **update_data
+                    }
+                
+                grupo_ref.set(grupo_data)
+                logger.info(f"[configurar-schedule] ✅ Grupo creado y schedule configurado para grupo {grupo_id}: enabled={enabled}, weekdays={schedule_weekdays}, nights={nights}, currency={currency}, days={days}")
+            except Exception as e:
+                logger.error(f"[configurar-schedule] ❌ Error al crear grupo desde competitive_set: {e}")
+                # Crear grupo básico como fallback
+                grupo_data = {
+                    'name': 'Grupo Programado',
+                    'hotel_principal': '',
+                    'competidores': [],
+                    'days': update_data.get('days', 7),
+                    'nights': update_data.get('nights', 1),
+                    'currency': update_data.get('currency', 'USD'),
+                    'created_at': datetime.now(),
+                    **update_data
+                }
+                grupo_ref.set(grupo_data)
+                logger.info(f"[configurar-schedule] ✅ Grupo básico creado y schedule configurado para grupo {grupo_id}")
         
         return jsonify({"success": True, "message": "Schedule configurado"})
     except Exception as e:
